@@ -179,58 +179,46 @@ function AutoPlaceSeed.FindAvailableSpots(forceRescan)
     return spots
 end
 
--- Extract seed name (remove " Seed" suffix if present)
-local function ExtractSeedName(fullName)
-    -- Pattern: "Cactus Seed" -> "Cactus"
-    local seedName = fullName:match("(.+)%s+Seed$")
-    if seedName then
-        return seedName
+-- Extract clean seed name (remove quantity prefix like "[x4]")
+-- "[x4] Cactus Seed" -> "Cactus Seed"
+-- "[12 kg] Cactus Seed" -> "Cactus Seed"
+local function ExtractCleanName(displayName)
+    -- Remove quantity prefix: [x4], [1.2 kg], [Gold], etc.
+    local cleanName = displayName:match("%]%s*(.+)$")
+    if cleanName then
+        return cleanName
     end
-    return fullName  -- Return as-is if no " Seed" suffix
+    return displayName  -- No prefix, return as-is
 end
 
 -- Check if should place this seed (can pass seed name or Tool)
 function AutoPlaceSeed.ShouldPlaceSeed(seedInput)
     -- Early exit if no seeds selected
     if not next(AutoPlaceSeed.SelectedSeedsSet) then
-        print("[AutoPlaceSeed] ShouldPlaceSeed: No seeds in set")
         return false
     end
     
     local displayName
-    local plantName
     
-    -- If it's a Tool, get the name
+    -- Get display name
     if type(seedInput) == "userdata" and seedInput:IsA("Tool") then
         displayName = seedInput.Name
-        plantName = seedInput:GetAttribute("Plant")
-        print("[AutoPlaceSeed] ShouldPlaceSeed: DisplayName =", displayName, "| PlantName =", plantName)
     else
-        -- It's a string
         displayName = seedInput
-        plantName = ExtractSeedName(displayName)
-        print("[AutoPlaceSeed] ShouldPlaceSeed: DisplayName (string) =", displayName, "| PlantName =", plantName)
     end
+    
+    -- Extract clean name (remove [x4] prefix, etc.)
+    local cleanName = ExtractCleanName(displayName)
     
     -- OPTIMIZED: Direct string comparison (faster than regex)
     -- Check if name ends with " Seed" (minimum 5 chars: "X Seed")
-    if #displayName < 5 or string.sub(displayName, -5) ~= " Seed" then
-        print("[AutoPlaceSeed] ShouldPlaceSeed: Name doesn't end with ' Seed'")
+    if #cleanName < 5 or string.sub(cleanName, -5) ~= " Seed" then
         return false
     end
     
-    -- Debug: Print what's in the set
-    print("[AutoPlaceSeed] ShouldPlaceSeed: Checking if '" .. tostring(plantName) .. "' is in set")
-    local setKeys = {}
-    for key, _ in pairs(AutoPlaceSeed.SelectedSeedsSet) do
-        table.insert(setKeys, key)
-    end
-    print("[AutoPlaceSeed] ShouldPlaceSeed: Set contains:", table.concat(setKeys, ", "))
-    
-    -- OPTIMIZED: O(1) set lookup instead of O(n) table.find
-    local isInSet = plantName and AutoPlaceSeed.SelectedSeedsSet[plantName] == true
-    print("[AutoPlaceSeed] ShouldPlaceSeed: Result =", isInSet)
-    return isInSet
+    -- OPTIMIZED: O(1) set lookup using clean seed name
+    -- Match against exact seed name (e.g., "Cactus Seed")
+    return AutoPlaceSeed.SelectedSeedsSet[cleanName] == true
 end
 
 -- Get seed info from backpack Tool
@@ -257,8 +245,8 @@ function AutoPlaceSeed.GetSeedInfo(seedTool)
         print("[AutoPlaceSeed] GetSeedInfo - Seed attr:", seedName or "nil")
         print("[AutoPlaceSeed] GetSeedInfo - Plant attr:", plantName or "nil")
         
-        -- Use ItemName or Seed attribute, fallback to extracting from displayName
-        local finalName = itemName or seedName or ExtractSeedName(displayName)
+        -- Use ItemName or Seed attribute, fallback to extracting clean name from displayName
+        local finalName = itemName or seedName or ExtractCleanName(displayName)
         
         print("[AutoPlaceSeed] GetSeedInfo - Final Name chosen:", finalName)
         
