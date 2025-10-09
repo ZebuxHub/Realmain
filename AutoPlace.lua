@@ -103,30 +103,84 @@ function AutoPlace.GetAllPlants()
     return {}
 end
 
--- Check if item name matches plant format: [XX.X kg] Name
-local function IsPlantFormat(itemName)
-    -- Check if name starts with [XX.X kg] pattern
-    return string.match(itemName, "^%[%d+%.?%d* kg%]") ~= nil
+-- Extract plant name from backpack item name (format: "[XX.X kg] PlantName")
+local function ExtractPlantName(itemName)
+    -- Pattern: "[XX.X kg] Name" -> extract "Name"
+    local plantName = itemName:match("%]%s*(.+)$")
+    if plantName then
+        return plantName:match("^%s*(.-)%s*$") -- Trim whitespace
+    end
+    return itemName -- Fallback to full name
+end
+
+-- Calculate string similarity (0-1, higher = more similar)
+local function StringSimilarity(str1, str2)
+    str1 = str1:lower()
+    str2 = str2:lower()
+    
+    -- Exact match
+    if str1 == str2 then
+        return 1.0
+    end
+    
+    -- Contains check
+    if str1:find(str2, 1, true) or str2:find(str1, 1, true) then
+        return 0.9
+    end
+    
+    -- Levenshtein distance approximation
+    local len1, len2 = #str1, #str2
+    local maxLen = math.max(len1, len2)
+    
+    if maxLen == 0 then
+        return 1.0
+    end
+    
+    -- Count matching characters
+    local matches = 0
+    local minLen = math.min(len1, len2)
+    
+    for i = 1, minLen do
+        if str1:sub(i, i) == str2:sub(i, i) then
+            matches = matches + 1
+        end
+    end
+    
+    return matches / maxLen
+end
+
+-- Check if plant name matches any known plant (80% similarity)
+function AutoPlace.IsValidPlantName(itemName)
+    local extractedName = ExtractPlantName(itemName)
+    
+    -- Get all known plant names
+    local knownPlants = AutoPlace.GetAllPlants()
+    
+    for _, plant in ipairs(knownPlants) do
+        local similarity = StringSimilarity(extractedName, plant.Name)
+        if similarity >= 0.8 then
+            return true, plant.Name
+        end
+    end
+    
+    return false, nil
 end
 
 -- Get plant info from backpack item
 function AutoPlace.GetPlantInfo(plantModel)
     local success, info = pcall(function()
-        local name = plantModel.Name
-        
-        -- Check if it matches plant format
-        if not IsPlantFormat(name) then
-            return nil
-        end
+        local itemName = plantModel.Name
+        local extractedName = ExtractPlantName(itemName)
         
         return {
-            Name = name,
+            Name = extractedName,
+            OriginalName = itemName,
             ID = plantModel:GetAttribute("ID"),
             Damage = plantModel:GetAttribute("Damage") or 0
         }
     end)
     
-    if success and info and info.ID then
+    if success and info.ID then
         return info
     end
     
@@ -248,6 +302,13 @@ function AutoPlace.ProcessPlant(plantModel)
         return false
     end
     
+    -- Quick validation: Check if item name matches any known plant (80% similarity)
+    local isValid, matchedName = AutoPlace.IsValidPlantName(plantModel.Name)
+    if not isValid then
+        -- Skip silently - not a plant or doesn't match any known plants
+        return false
+    end
+    
     -- Get plant info
     local plantInfo = AutoPlace.GetPlantInfo(plantModel)
     if not plantInfo then
@@ -295,8 +356,7 @@ function AutoPlace.ProcessAllPlants()
     local placed = 0
     
     for _, item in ipairs(AutoPlace.References.Backpack:GetChildren()) do
-        -- Only process items that match plant format [XX.X kg] Name
-        if item:IsA("Model") and IsPlantFormat(item.Name) then
+        if item:IsA("Model") then
             local success = AutoPlace.ProcessPlant(item)
             if success then
                 placed = placed + 1
@@ -328,11 +388,17 @@ function AutoPlace.SetupEventListeners()
     
     -- Listen for new items added to backpack
     AutoPlace.BackpackConnection = AutoPlace.References.Backpack.ChildAdded:Connect(function(item)
-        -- Only process items that match plant format [XX.X kg] Name
-        if item:IsA("Model") and IsPlantFormat(item.Name) and AutoPlace.Settings.AutoPlaceEnabled and AutoPlace.IsRunning then
+        if item:IsA("Model") and AutoPlace.Settings.AutoPlaceEnabled and AutoPlace.IsRunning then
+            -- Quick pre-check: Is this a valid plant name?
+            local isValid, matchedName = AutoPlace.IsValidPlantName(item.Name)
+            if not isValid then
+                -- Skip - not a plant or doesn't match any known plants
+                return
+            end
+            
             task.wait(0.1) -- Small delay to let item fully load
             
-            print("[AutoPlace] New plant detected in backpack:", item.Name)
+            print("[AutoPlace] New plant detected in backpack:", item.Name, "→", matchedName)
             
             task.spawn(function()
                 AutoPlace.ProcessPlant(item)
