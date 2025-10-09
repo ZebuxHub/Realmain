@@ -454,8 +454,33 @@ function AutoPlace.ProcessPlant(plantTool)
         return false
     end
     
-    -- Pick first available spot
-    local selectedSpot = spots[1]
+    -- Pick first available spot and verify row isn't full
+    local selectedSpot = nil
+    for _, spot in ipairs(spots) do
+        -- Double-check row count before placing
+        local plotNum = AutoPlace.GetOwnedPlot()
+        if plotNum then
+            local plot = workspace.Plots:FindFirstChild(plotNum)
+            if plot then
+                local rows = plot:FindFirstChild("Rows")
+                if rows then
+                    local row = rows:FindFirstChild(spot.RowName)
+                    if row then
+                        local grass = row:FindFirstChild("Grass")
+                        if grass and AutoPlace.CanPlaceInRow(spot.RowName, grass) then
+                            selectedSpot = spot
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    if not selectedSpot then
+        AutoPlace.IsProcessing = false
+        return false
+    end
     
     -- Equip plant
     if not AutoPlace.MovePlantToCharacter(plantTool) then
