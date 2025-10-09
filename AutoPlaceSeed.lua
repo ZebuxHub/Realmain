@@ -26,6 +26,9 @@ local AutoPlaceSeed = {
     RowSeedCounts = {},
     MaxSeedsPerRow = 5,
     
+    -- Optimized: Selected seeds as a set for O(1) lookup
+    SelectedSeedsSet = {},
+    
     -- Event Connections
     BackpackConnection = nil,
     PlotAttributeConnections = {},
@@ -42,6 +45,17 @@ local AutoPlaceSeed = {
     Initialization
     ========================================
 --]]
+
+-- Rebuild selected seeds set for O(1) lookup
+function AutoPlaceSeed.RebuildSeedsSet()
+    AutoPlaceSeed.SelectedSeedsSet = {}
+    local selectedSeeds = AutoPlaceSeed.Settings.SelectedSeedsToPlace
+    if selectedSeeds then
+        for _, seedName in ipairs(selectedSeeds) do
+            AutoPlaceSeed.SelectedSeedsSet[seedName] = true
+        end
+    end
+end
 
 function AutoPlaceSeed.Init(services, references, settings, brain)
     AutoPlaceSeed.Services = services
@@ -177,10 +191,8 @@ end
 
 -- Check if should place this seed (can pass seed name or Tool)
 function AutoPlaceSeed.ShouldPlaceSeed(seedInput)
-    local selectedSeeds = AutoPlaceSeed.Settings.SelectedSeedsToPlace
-    
-    -- If no seeds selected, don't place anything
-    if not selectedSeeds or #selectedSeeds == 0 then
+    -- Early exit if no seeds selected
+    if not next(AutoPlaceSeed.SelectedSeedsSet) then
         return false
     end
     
@@ -197,14 +209,14 @@ function AutoPlaceSeed.ShouldPlaceSeed(seedInput)
         plantName = ExtractSeedName(displayName)
     end
     
-    -- STRICT CHECK: Name MUST end with " Seed" (space + Seed)
-    -- This filters out plants like "[1.3 kg] Cactus" but allows "[x4] Cactus Seed"
-    if not displayName:match("%sSeed$") then
+    -- OPTIMIZED: Direct string comparison (faster than regex)
+    -- Check if name ends with " Seed" (minimum 5 chars: "X Seed")
+    if #displayName < 5 or string.sub(displayName, -5) ~= " Seed" then
         return false
     end
     
-    -- Check if seed is in selected list by Plant name (e.g., "Cactus")
-    return plantName and table.find(selectedSeeds, plantName) ~= nil
+    -- OPTIMIZED: O(1) set lookup instead of O(n) table.find
+    return plantName and AutoPlaceSeed.SelectedSeedsSet[plantName] == true
 end
 
 -- Get seed info from backpack Tool
@@ -516,12 +528,14 @@ function AutoPlaceSeed.SetupEventListeners()
     
     -- Listen for new items added to backpack
     AutoPlaceSeed.BackpackConnection = AutoPlaceSeed.References.Backpack.ChildAdded:Connect(function(item)
-        if not item:IsA("Tool") or not AutoPlaceSeed.Settings.AutoPlaceSeedsEnabled or not AutoPlaceSeed.IsRunning then
+        -- OPTIMIZED: Check name first (fastest check)
+        local itemName = item.Name
+        if #itemName < 5 or string.sub(itemName, -5) ~= " Seed" then
             return
         end
         
-        -- STRICT CHECK: Name MUST end with " Seed"
-        if not item.Name:match("%sSeed$") then
+        -- Then check type and state
+        if not item:IsA("Tool") or not AutoPlaceSeed.Settings.AutoPlaceSeedsEnabled or not AutoPlaceSeed.IsRunning then
             return
         end
         
@@ -545,6 +559,9 @@ function AutoPlaceSeed.Start()
     
     AutoPlaceSeed.IsRunning = true
     print("[AutoPlaceSeed] Starting seed placement system...")
+    
+    -- OPTIMIZED: Build seeds set for fast lookups
+    AutoPlaceSeed.RebuildSeedsSet()
     
     -- Initial scan
     task.spawn(function()
