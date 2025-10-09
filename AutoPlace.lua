@@ -679,6 +679,9 @@ function AutoPlace.Start()
     
     AutoPlace.IsRunning = true
     
+    -- CRITICAL: Clear UsedCFrames on fresh start
+    AutoPlace.UsedCFrames = {}
+    
     -- OPTIMIZED: Build plants set for fast lookups
     AutoPlace.RebuildPlantsSet()
     
@@ -696,9 +699,8 @@ function AutoPlace.Start()
         AutoPlace.SetupPlotMonitoring()
     end)
     
-    -- Process existing plants
+    -- CRITICAL: Process existing plants immediately (no delay)
     task.spawn(function()
-        task.wait(0.2)  -- Reduced: Process plants sooner
         AutoPlace.ProcessAllPlants()
     end)
 end
