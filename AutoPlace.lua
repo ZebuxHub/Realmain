@@ -267,13 +267,24 @@ function AutoPlace.ShouldPlacePlant(plantInfo)
     end
 end
 
--- Count plants in a specific row
+-- Count plants in a specific row (including stacked items in each spot)
 function AutoPlace.CountPlantsInRow(rowName, grass)
     local count = 0
     if grass then
-        for _, child in ipairs(grass:GetChildren()) do
-            if child:IsA("Model") and child.Name ~= "Floor" then
-                count = count + 1
+        -- Each spot (Floor) can have multiple plants stacked
+        for _, spot in ipairs(grass:GetChildren()) do
+            if spot:IsA("Model") and spot.Name == "Floor" then
+                -- Count all models inside this spot (stacked plants)
+                for _, item in ipairs(spot:GetChildren()) do
+                    if item:IsA("Model") then
+                        count = count + 1
+                    end
+                end
+            else
+                -- If it's not a Floor, it might be a direct child plant (old format)
+                if spot:IsA("Model") and spot.Name ~= "Floor" then
+                    count = count + 1
+                end
             end
         end
     end
