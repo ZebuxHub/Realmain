@@ -69,6 +69,21 @@ end
     ========================================
 --]]
 
+-- Format numbers with suffixes (1K, 1M, 1B, etc.)
+local function FormatNumber(num)
+    if num >= 1000000000000 then
+        return string.format("%.2fT", num / 1000000000000)
+    elseif num >= 1000000000 then
+        return string.format("%.2fB", num / 1000000000)
+    elseif num >= 1000000 then
+        return string.format("%.2fM", num / 1000000)
+    elseif num >= 1000 then
+        return string.format("%.2fK", num / 1000)
+    else
+        return tostring(math.floor(num))
+    end
+end
+
 -- Get how much money the player has
 function AutoBuy.GetMoney()
     local success, result = pcall(function()
@@ -263,14 +278,14 @@ function AutoBuy.SetupEventListeners()
         
         -- Only trigger if money increased and system is enabled
         if newMoney > AutoBuy.LastMoney and AutoBuy.Settings.AutoBuyEnabled and AutoBuy.IsRunning then
-            print("💰 [AutoBuy] Money increased:", AutoBuy.LastMoney, "→", newMoney)
+            print("[AutoBuy] Money increased: $" .. FormatNumber(AutoBuy.LastMoney) .. " → $" .. FormatNumber(newMoney))
             AutoBuy.LastMoney = newMoney
             
             -- Try to buy seeds
             task.spawn(function()
                 local success, purchasesMade = AutoBuy.ProcessCycle()
                 if purchasesMade and purchasesMade > 0 then
-                    print("🛒 [AutoBuy] Bought", purchasesMade, "seeds")
+                    print("[AutoBuy] Bought " .. purchasesMade .. " seeds")
                 end
             end)
         else
@@ -293,7 +308,7 @@ function AutoBuy.SetupEventListeners()
                 
                 -- Only trigger if stock increased and system is enabled
                 if newStock > oldStock and AutoBuy.Settings.AutoBuyEnabled and AutoBuy.IsRunning then
-                    print("📦 [AutoBuy] Stock increased for", seedInfo.Name, ":", oldStock, "→", newStock)
+                    print("[AutoBuy] Stock increased for " .. seedInfo.Name .. ": " .. FormatNumber(oldStock) .. " → " .. FormatNumber(newStock))
                     AutoBuy.LastStockCheck[seedInfo.Name] = newStock
                     
                     -- Try to buy this specific seed if it's selected
@@ -337,10 +352,10 @@ function AutoBuy.RunLoop()
             task.wait(60)  -- Check every minute
             
             if AutoBuy.IsRunning then
-                print("📊 [AutoBuy] Status Report:")
+                print("[AutoBuy] Status Report:")
                 print("  - Total Purchases:", AutoBuy.TotalPurchases)
                 print("  - System:", AutoBuy.Settings.AutoBuyEnabled and "ENABLED" or "DISABLED")
-                print("  - Current Money: $" .. AutoBuy.GetMoney())
+                print("  - Current Money: $" .. FormatNumber(AutoBuy.GetMoney()))
             end
         end
     end)
