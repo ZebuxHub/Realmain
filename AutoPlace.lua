@@ -16,11 +16,15 @@ local AutoPlace = {
     -- State
     IsRunning = false,
     TotalPlacements = 0,
-    IsProcessing = false,  -- NEW: Prevent concurrent processing
+    IsProcessing = false,
     
     -- Cached Spots
     CachedSpots = {},
     SpotsCacheValid = false,
+    
+    -- Plant Data Cache (avoid repeated ReplicatedStorage reads)
+    PlantDataCache = nil,
+    PlantNamesList = {},
     
     -- Event Connections
     BackpackConnection = nil,
@@ -46,7 +50,6 @@ function AutoPlace.Init(services, references, settings, brain)
     AutoPlace.Settings = settings
     AutoPlace.Brain = brain
     
-    print("✅ [AutoPlace] Module initialized successfully!")
     return true
 end
 
@@ -84,29 +87,35 @@ function AutoPlace.GetOwnedPlot()
     return nil
 end
 
--- Get all plant names from ReplicatedStorage
+-- Get all plant names from ReplicatedStorage (cached)
 function AutoPlace.GetAllPlants()
+    if AutoPlace.PlantDataCache then
+        return AutoPlace.PlantDataCache
+    end
+    
     local plants = {}
     
-    local success, result = pcall(function()
+    pcall(function()
         for _, plant in ipairs(AutoPlace.References.Plants:GetChildren()) do
-            local damage = plant:GetAttribute("Damage") or 0
             table.insert(plants, {
                 Name = plant.Name,
-                Damage = damage
+                Damage = plant:GetAttribute("Damage") or 0
             })
         end
     end)
     
-    if success then
-        -- Sort by damage (highest first)
-        table.sort(plants, function(a, b)
-            return a.Damage > b.Damage
-        end)
-        return plants
+    table.sort(plants, function(a, b)
+        return a.Damage > b.Damage
+    end)
+    
+    AutoPlace.PlantDataCache = plants
+    
+    -- Build name list for faster lookup
+    for _, plant in ipairs(plants) do
+        table.insert(AutoPlace.PlantNamesList, plant.Name:lower())
     end
     
-    return {}
+    return plants
 end
 
 -- Extract plant name from backpack item name (format: "[XX.X kg] PlantName")
@@ -129,47 +138,54 @@ local function StringSimilarity(str1, str2)
         return 1.0
     end
     
+    -- Length check: If difference > 50%, can't be 80% similar
+    local len1, len2 = #str1, #str2
+    if math.abs(len1 - len2) > math.max(len1, len2) * 0.5 then
+        return 0.0
+    end
+    
     -- Contains check
     if str1:find(str2, 1, true) or str2:find(str1, 1, true) then
         return 0.9
     end
     
-    -- Levenshtein distance approximation
-    local len1, len2 = #str1, #str2
-    local maxLen = math.max(len1, len2)
-    
-    if maxLen == 0 then
-        return 1.0
-    end
-    
-    -- Count matching characters
+    -- Character comparison with early exit
     local matches = 0
     local minLen = math.min(len1, len2)
+    local maxLen = math.max(len1, len2)
     
     for i = 1, minLen do
         if str1:sub(i, i) == str2:sub(i, i) then
             matches = matches + 1
+        else
+            -- Early exit: Can't reach 80% threshold
+            local remaining = minLen - i
+            if (matches + remaining) / maxLen < 0.8 then
+                return 0.0
+            end
         end
     end
     
     return matches / maxLen
 end
 
--- Check if plant name matches any known plant (80% similarity)
+-- Check if plant name matches any known plant (80% similarity, cached)
 function AutoPlace.IsValidPlantName(itemName)
     local extractedName = ExtractPlantName(itemName)
     
-    -- Get all known plant names
-    local knownPlants = AutoPlace.GetAllPlants()
+    -- Ensure cache is built
+    if #AutoPlace.PlantNamesList == 0 then
+        AutoPlace.GetAllPlants()
+    end
     
-    for _, plant in ipairs(knownPlants) do
-        local similarity = StringSimilarity(extractedName, plant.Name)
-        if similarity >= 0.8 then
-            return true, plant.Name
+    -- Quick lookup against cached names
+    for _, plantName in ipairs(AutoPlace.PlantNamesList) do
+        if StringSimilarity(extractedName, plantName) >= 0.8 then
+            return true
         end
     end
     
-    return false, nil
+    return false
 end
 
 -- Get plant info from backpack Tool
@@ -226,14 +242,12 @@ end
 -- Invalidate spots cache (call when CanPlace changes)
 function AutoPlace.InvalidateCache()
     AutoPlace.SpotsCacheValid = false
-    print("[AutoPlace] Cache invalidated - will rescan on next placement")
 end
 
 -- Find all available spots in player's plot (with caching)
 function AutoPlace.FindAvailableSpots(forceRescan)
     -- Return cached spots if valid and not forcing rescan
     if AutoPlace.SpotsCacheValid and not forceRescan then
-        print("[AutoPlace] Using cached spots:", #AutoPlace.CachedSpots)
         return AutoPlace.CachedSpots
     end
     
@@ -241,26 +255,15 @@ function AutoPlace.FindAvailableSpots(forceRescan)
     local plotNum = AutoPlace.GetOwnedPlot()
     
     if not plotNum then
-        warn("[AutoPlace] Could not find owned plot number!")
         return spots
     end
     
-    print("[AutoPlace] 🔄 Scanning plot #" .. plotNum .. " for available spots...")
-    
-    local success, result = pcall(function()
+    local success = pcall(function()
         local plot = workspace.Plots:FindFirstChild(plotNum)
-        if not plot then
-            warn("[AutoPlace] Plot not found in workspace:", plotNum)
-            return
-        end
+        if not plot then return end
         
         local rows = plot:FindFirstChild("Rows")
-        if not rows then
-            warn("[AutoPlace] Rows folder not found in plot:", plotNum)
-            return
-        end
-        
-        print("[AutoPlace] Found Rows folder, scanning...")
+        if not rows then return end
         
         -- Loop through all rows (sorted by name)
         local rowsList = rows:GetChildren()
@@ -269,17 +272,9 @@ function AutoPlace.FindAvailableSpots(forceRescan)
         end)
         
         for _, row in ipairs(rowsList) do
-            print("[AutoPlace] Checking Row:", row.Name)
-            
             local grass = row:FindFirstChild("Grass")
             if grass then
-                print("[AutoPlace] Found Grass folder in Row " .. row.Name)
-                
-                -- Loop through all grass spots
-                local grassSpots = grass:GetChildren()
-                local availableInRow = 0
-                
-                for _, spot in ipairs(grassSpots) do
+                for _, spot in ipairs(grass:GetChildren()) do
                     local canPlace = spot:GetAttribute("CanPlace")
                     if canPlace == true then
                         table.insert(spots, {
@@ -289,117 +284,79 @@ function AutoPlace.FindAvailableSpots(forceRescan)
                             RowName = row.Name,
                             SpotName = spot.Name
                         })
-                        availableInRow = availableInRow + 1
                     end
                 end
-                
-                print("[AutoPlace] Row " .. row.Name .. ": " .. availableInRow .. " available spots")
-            else
-                print("[AutoPlace] No Grass folder in Row " .. row.Name)
             end
         end
     end)
     
-    if not success then
-        warn("[AutoPlace] Error scanning plots:", result)
-    end
-    
     -- Cache the results
     AutoPlace.CachedSpots = spots
     AutoPlace.SpotsCacheValid = true
-    print("[AutoPlace] ✅ Cache updated with " .. #spots .. " spots")
     
     return spots
 end
 
 -- Move plant tool from backpack to character in workspace
 function AutoPlace.MovePlantToCharacter(plantTool)
-    local success, err = pcall(function()
+    local success = pcall(function()
         local character = AutoPlace.References.LocalPlayer.Character
         local backpack = AutoPlace.References.Backpack
         
-        if not character then
-            error("Character not found")
+        if not character or not plantTool:IsA("Tool") then
+            return
         end
         
-        -- Verify it's a Tool
-        if not plantTool:IsA("Tool") then
-            error("Item is not a Tool")
-        end
-        
-        -- First, unequip any tool currently equipped (like Shovel)
+        -- Unequip any currently equipped tools
         for _, tool in ipairs(character:GetChildren()) do
             if tool:IsA("Tool") then
-                print("[AutoPlace] Unequipping:", tool.Name)
-                tool.Parent = backpack  -- Move back to backpack
+                tool.Parent = backpack
             end
         end
         
-        -- Now equip the plant Tool
+        -- Equip the plant tool
         plantTool.Parent = character
-        
-        print("[AutoPlace] Equipped plant to character:", plantTool.Name)
     end)
-    
-    if not success then
-        warn("[AutoPlace] Failed to equip plant to character:", err)
-    end
     
     return success
 end
 
 -- Place plant at specific spot (centered)
 function AutoPlace.PlacePlant(plantInfo, spot)
-    local success, err = pcall(function()
-        -- Get Floor's CFrame (center of the spot)
-        local floorCFrame = spot.Floor.CFrame
-        
-        -- Extract center position from Floor
-        local position = floorCFrame.Position
+    local success = pcall(function()
+        local position = spot.Floor.CFrame.Position
         local x, y, z = position.X, position.Y, position.Z
         
-        -- Get rotation components from PivotOffset
-        -- PivotOffset format: CFrame with rotation matrix
+        -- Get rotation from PivotOffset
         local pivot = spot.PivotOffset
         local _, _, _, r00, r01, r02, r10, r11, r12, r20, r21, r22 = pivot:GetComponents()
         
-        -- If pivot is identity or nil, default to identity rotation
         if not pivot or pivot == CFrame.new() then
             r00, r01, r02 = 1, 0, 0
             r10, r11, r12 = 0, 1, 0
             r20, r21, r22 = 0, 0, 1
         end
         
-        -- Construct CFrame with center position from Floor and rotation from PivotOffset
         local placementCFrame = CFrame.new(x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22)
         
-        print("[AutoPlace] Placing at center: (" .. math.floor(x) .. ", " .. math.floor(y) .. ", " .. math.floor(z) .. ")")
-        
-        local args = {
-            [1] = {
-                ["ID"] = plantInfo.ID,
-                ["CFrame"] = placementCFrame,
-                ["Item"] = plantInfo.Name,
-                ["Floor"] = spot.Floor
-            }
-        }
-        
-        AutoPlace.References.PlaceItemRemote:FireServer(unpack(args))
+        AutoPlace.References.PlaceItemRemote:FireServer({
+            ["ID"] = plantInfo.ID,
+            ["CFrame"] = placementCFrame,
+            ["Item"] = plantInfo.Name,
+            ["Floor"] = spot.Floor
+        })
     end)
     
     if success then
         AutoPlace.TotalPlacements = AutoPlace.TotalPlacements + 1
-        print("[AutoPlace] ✅ Placed:", plantInfo.Name, "| DMG:", FormatNumber(plantInfo.Damage))
-        return true
-    else
-        warn("[AutoPlace] ❌ Failed to place plant:", plantInfo.Name, err)
-        return false
     end
+    
+    return success
 end
 
 -- Process single plant tool from backpack
 function AutoPlace.ProcessPlant(plantTool)
-    -- Wait if already processing another plant (ONE BY ONE)
+    -- Wait if already processing (one by one)
     while AutoPlace.IsProcessing do
         task.wait(0.1)
     end
@@ -407,16 +364,13 @@ function AutoPlace.ProcessPlant(plantTool)
     AutoPlace.IsProcessing = true
     
     if not AutoPlace.IsRunning or not AutoPlace.Settings.AutoPlaceEnabled then
-        print("[AutoPlace] Skipped - System not running or disabled")
         AutoPlace.IsProcessing = false
         return false
     end
     
-    -- Quick validation: Check if item name matches any known plant (80% similarity)
-    local isValid, matchedName = AutoPlace.IsValidPlantName(plantTool.Name)
+    -- Validate plant name (80% similarity)
+    local isValid = AutoPlace.IsValidPlantName(plantTool.Name)
     if not isValid then
-        -- Skip silently - not a plant or doesn't match any known plants
-        print("[AutoPlace] Skipped - Not a valid plant:", plantTool.Name)
         AutoPlace.IsProcessing = false
         return false
     end
@@ -424,56 +378,39 @@ function AutoPlace.ProcessPlant(plantTool)
     -- Get plant info
     local plantInfo = AutoPlace.GetPlantInfo(plantTool)
     if not plantInfo then
-        warn("[AutoPlace] Could not read plant info:", plantTool.Name)
         AutoPlace.IsProcessing = false
         return false
     end
     
-    print("[AutoPlace] Processing:", plantInfo.Name, "| ID:", plantInfo.ID, "| DMG:", plantInfo.Damage)
-    
-    -- Check if should place this plant
+    -- Check filter
     if not AutoPlace.ShouldPlacePlant(plantInfo) then
-        print("[AutoPlace] Skipped - Does not match filter:", plantInfo.Name)
         AutoPlace.IsProcessing = false
         return false
     end
     
-    -- Find available spots (uses cache if valid)
-    print("[AutoPlace] Finding available spots...")
+    -- Find available spots (uses cache)
     local spots = AutoPlace.FindAvailableSpots()
-    print("[AutoPlace] Found", #spots, "available spots")
-    
     if #spots == 0 then
-        warn("[AutoPlace] ❌ No available spots! All plots full.")
         AutoPlace.IsProcessing = false
         return false
     end
     
-    -- Pick first available spot (predictable, orderly placement)
+    -- Pick first available spot
     local selectedSpot = spots[1]
-    print("[AutoPlace] Selected Row " .. selectedSpot.RowName .. ", Spot " .. selectedSpot.SpotName)
     
-    -- Equip plant tool to character (move from backpack to character)
-    print("[AutoPlace] Equipping plant tool to character...")
-    local equipped = AutoPlace.MovePlantToCharacter(plantTool)
-    if not equipped then
-        warn("[AutoPlace] ❌ Could not equip plant to character:", plantInfo.Name)
+    -- Equip plant
+    if not AutoPlace.MovePlantToCharacter(plantTool) then
         AutoPlace.IsProcessing = false
         return false
     end
     
-    -- Wait a bit for equip to register
-    task.wait(0.2)
+    task.wait(0.1)  -- Reduced: Just enough for server sync
     
     -- Place plant
-    print("[AutoPlace] Placing plant...")
     local placed = AutoPlace.PlacePlant(plantInfo, selectedSpot)
     
     if placed then
-        -- No need to invalidate cache - Row-Level monitoring will update it automatically!
-        
-        -- Wait a bit before allowing next plant
-        task.wait(0.3)
+        task.wait(0.15)  -- Reduced: Faster placement cycle
     end
     
     AutoPlace.IsProcessing = false
@@ -510,22 +447,17 @@ end
 -- Update cache incrementally when a spot becomes available/unavailable
 function AutoPlace.UpdateSpotInCache(spot, isAvailable, rowName)
     if isAvailable then
-        -- Add spot to cache
-        local spotData = {
+        table.insert(AutoPlace.CachedSpots, {
             Floor = spot,
             CFrame = spot.CFrame,
             PivotOffset = spot.PivotOffset,
             RowName = rowName,
             SpotName = spot.Name
-        }
-        table.insert(AutoPlace.CachedSpots, spotData)
-        print("[AutoPlace] ➕ Added spot to cache: Row " .. rowName .. ", Spot " .. spot.Name .. " | Total: " .. #AutoPlace.CachedSpots)
+        })
     else
-        -- Remove spot from cache
         for i, cachedSpot in ipairs(AutoPlace.CachedSpots) do
             if cachedSpot.Floor == spot then
                 table.remove(AutoPlace.CachedSpots, i)
-                print("[AutoPlace] ➖ Removed spot from cache: Row " .. rowName .. ", Spot " .. spot.Name .. " | Total: " .. #AutoPlace.CachedSpots)
                 break
             end
         end
@@ -545,41 +477,30 @@ function AutoPlace.SetupPlotMonitoring()
         return
     end
     
-    local success = pcall(function()
+    pcall(function()
         local plot = workspace.Plots:FindFirstChild(plotNum)
         if not plot then return end
         
         local rows = plot:FindFirstChild("Rows")
         if not rows then return end
         
-        print("[AutoPlace] 🔍 Setting up Row-Level monitoring...")
-        
         for _, row in ipairs(rows:GetChildren()) do
             local grass = row:FindFirstChild("Grass")
             if grass then
-                -- Monitor ChildAdded in Grass (plant placed → spot occupied)
                 local addedConn = grass.ChildAdded:Connect(function(child)
                     if child:IsA("Model") then
-                        -- Find the corresponding spot (parent of where plant was placed)
                         local spot = child.Parent
                         if spot then
-                            print("[AutoPlace] 🌱 Plant placed in Row " .. row.Name .. ", Spot " .. spot.Name)
                             AutoPlace.UpdateSpotInCache(spot, false, row.Name)
                         end
                     end
                 end)
                 
-                -- Monitor ChildRemoved in Grass (plant removed → spot available)
                 local removedConn = grass.ChildRemoved:Connect(function(child)
                     if child:IsA("Model") then
-                        -- Plant removed, spot might be available again
                         local spot = child.Parent
-                        if spot then
-                            local canPlace = spot:GetAttribute("CanPlace")
-                            if canPlace == true then
-                                print("[AutoPlace] 🗑️ Plant removed from Row " .. row.Name .. ", Spot " .. spot.Name)
-                                AutoPlace.UpdateSpotInCache(spot, true, row.Name)
-                            end
+                        if spot and spot:GetAttribute("CanPlace") == true then
+                            AutoPlace.UpdateSpotInCache(spot, true, row.Name)
                         end
                     end
                 end)
@@ -588,13 +509,7 @@ function AutoPlace.SetupPlotMonitoring()
                 table.insert(AutoPlace.PlotAttributeConnections, removedConn)
             end
         end
-        
-        print("[AutoPlace] ✅ Monitoring " .. (#AutoPlace.PlotAttributeConnections / 2) .. " rows (ChildAdded/Removed)")
     end)
-    
-    if not success then
-        warn("[AutoPlace] Failed to setup plot monitoring")
-    end
 end
 
 function AutoPlace.SetupEventListeners()
@@ -611,41 +526,19 @@ function AutoPlace.SetupEventListeners()
     
     -- Listen for new items added to backpack
     AutoPlace.BackpackConnection = AutoPlace.References.Backpack.ChildAdded:Connect(function(item)
-        print("[AutoPlace] Item added to backpack:", item.Name, "| Type:", item.ClassName)
-        
-        if not item:IsA("Tool") then
-            print("[AutoPlace] Skipped - Not a Tool")
+        if not item:IsA("Tool") or not AutoPlace.Settings.AutoPlaceEnabled or not AutoPlace.IsRunning then
             return
         end
         
-        if not AutoPlace.Settings.AutoPlaceEnabled then
-            print("[AutoPlace] Skipped - Auto-place disabled")
+        if not AutoPlace.IsValidPlantName(item.Name) then
             return
         end
-        
-        if not AutoPlace.IsRunning then
-            print("[AutoPlace] Skipped - System not running")
-            return
-        end
-        
-        -- Quick pre-check: Is this a valid plant name?
-        local isValid, matchedName = AutoPlace.IsValidPlantName(item.Name)
-        if not isValid then
-            -- Skip - not a plant or doesn't match any known plants
-            print("[AutoPlace] Skipped - Name doesn't match any plant:", item.Name)
-            return
-        end
-        
-        task.wait(0.1) -- Small delay to let item fully load
-        
-        print("[AutoPlace] ✅ New plant detected:", item.Name, "→", matchedName)
         
         task.spawn(function()
+            task.wait(0.05)  -- Minimal delay for item to load
             AutoPlace.ProcessPlant(item)
         end)
     end)
-    
-    print("✅ [AutoPlace] Event listeners setup!")
 end
 
 --[[
@@ -660,62 +553,26 @@ function AutoPlace.Start()
     end
     
     AutoPlace.IsRunning = true
-    print("[AutoPlace] System starting...")
     
-    -- Initial scan of available plots (force rescan to build cache)
+    -- Initial scan
     task.spawn(function()
-        print("="..string.rep("=", 50))
-        print("[AutoPlace] 🔍 INITIAL PLOT SCAN")
-        print("="..string.rep("=", 50))
-        
-        local spots = AutoPlace.FindAvailableSpots(true)
-        
-        print("="..string.rep("=", 50))
-        print("[AutoPlace] 📊 SCAN RESULTS:")
-        print("[AutoPlace] Total available spots:", #spots)
-        
-        if #spots > 0 then
-            print("[AutoPlace] ✅ Plots ready for placement!")
-            print("[AutoPlace] Sample spots:")
-            for i = 1, math.min(5, #spots) do
-                local spot = spots[i]
-                print("  - Row " .. spot.RowName .. ", Spot " .. spot.SpotName .. ": " .. spot.Floor:GetFullName())
-            end
-            if #spots > 5 then
-                print("  ... and " .. (#spots - 5) .. " more spots")
-            end
-        else
-            warn("[AutoPlace] ⚠️ No available spots found!")
-            warn("[AutoPlace] Possible issues:")
-            warn("  1. All plots are full")
-            warn("  2. No CanPlace=true attributes found")
-            warn("  3. Player doesn't own a plot")
-        end
-        print("="..string.rep("=", 50))
+        AutoPlace.FindAvailableSpots(true)
     end)
     
-    -- Setup event-driven system
+    -- Setup event system
     AutoPlace.SetupEventListeners()
     
-    -- Setup plot monitoring (CanPlace attribute changes)
+    -- Setup plot monitoring
     task.spawn(function()
-        task.wait(1) -- Wait for initial scan to complete
+        task.wait(0.3)  -- Reduced: Start monitoring faster
         AutoPlace.SetupPlotMonitoring()
     end)
     
-    -- Initial scan of existing plants in backpack
+    -- Process existing plants
     task.spawn(function()
-        task.wait(0.5)
-        print("[AutoPlace] Scanning existing plants in backpack...")
-        local placed = AutoPlace.ProcessAllPlants()
-        if placed > 0 then
-            print("[AutoPlace] Placed", placed, "existing plants")
-        else
-            print("[AutoPlace] No plants in backpack to place")
-        end
+        task.wait(0.2)  -- Reduced: Process plants sooner
+        AutoPlace.ProcessAllPlants()
     end)
-    
-    print("✅ [AutoPlace] System started!")
 end
 
 function AutoPlace.Stop()
@@ -725,7 +582,6 @@ function AutoPlace.Stop()
     
     AutoPlace.IsRunning = false
     
-    -- Disconnect all events
     if AutoPlace.BackpackConnection then
         AutoPlace.BackpackConnection:Disconnect()
         AutoPlace.BackpackConnection = nil
@@ -741,11 +597,8 @@ function AutoPlace.Stop()
     end
     AutoPlace.PlotAttributeConnections = {}
     
-    -- Clear cache
     AutoPlace.CachedSpots = {}
     AutoPlace.SpotsCacheValid = false
-    
-    print("[AutoPlace] System stopped!")
 end
 
 function AutoPlace.GetStatus()
