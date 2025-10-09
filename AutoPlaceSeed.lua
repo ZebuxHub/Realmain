@@ -364,8 +364,19 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
                     
                     -- Check if row has space (seeds count as plants in the attribute)
                     if plantsCount < AutoPlaceSeed.MaxSeedsPerRow then
-                        selectedSpot = spot
-                        break
+                        -- DOUBLE CHECK: Is this specific spot still empty?
+                        local spotIsEmpty = true
+                        for _, child in ipairs(spot.Floor:GetChildren()) do
+                            if child:IsA("Model") then
+                                spotIsEmpty = false
+                                break
+                            end
+                        end
+                        
+                        if spotIsEmpty then
+                            selectedSpot = spot
+                            break
+                        end
                     end
                 end
             end
