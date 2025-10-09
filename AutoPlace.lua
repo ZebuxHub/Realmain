@@ -299,6 +299,7 @@ end
 -- Process single plant from backpack
 function AutoPlace.ProcessPlant(plantModel)
     if not AutoPlace.IsRunning or not AutoPlace.Settings.AutoPlaceEnabled then
+        print("[AutoPlace] Skipped - System not running or disabled")
         return false
     end
     
@@ -306,6 +307,7 @@ function AutoPlace.ProcessPlant(plantModel)
     local isValid, matchedName = AutoPlace.IsValidPlantName(plantModel.Name)
     if not isValid then
         -- Skip silently - not a plant or doesn't match any known plants
+        print("[AutoPlace] Skipped - Not a valid plant:", plantModel.Name)
         return false
     end
     
@@ -316,33 +318,52 @@ function AutoPlace.ProcessPlant(plantModel)
         return false
     end
     
+    print("[AutoPlace] Processing:", plantInfo.Name, "| ID:", plantInfo.ID, "| DMG:", plantInfo.Damage)
+    
     -- Check if should place this plant
     if not AutoPlace.ShouldPlacePlant(plantInfo) then
+        print("[AutoPlace] Skipped - Does not match filter:", plantInfo.Name)
         return false
     end
     
     -- Find available spots
+    print("[AutoPlace] Finding available spots...")
     local spots = AutoPlace.FindAvailableSpots()
+    print("[AutoPlace] Found", #spots, "available spots")
+    
     if #spots == 0 then
-        warn("[AutoPlace] No available spots! All plots full.")
+        warn("[AutoPlace] ❌ No available spots! All plots full.")
         return false
     end
     
     -- Pick random spot
     local randomSpot = spots[math.random(1, #spots)]
+    print("[AutoPlace] Selected spot:", randomSpot.Floor:GetFullName())
     
     -- Equip plant
+    print("[AutoPlace] Equipping plant...")
     local equipped = AutoPlace.EquipPlant(plantInfo)
     if not equipped then
-        warn("[AutoPlace] Could not equip plant:", plantInfo.Name)
+        warn("[AutoPlace] ❌ Could not equip plant:", plantInfo.Name)
         return false
     end
     
     -- Wait a bit for equip to register
-    task.wait(0.1)
+    task.wait(0.2)
     
     -- Place plant
+    print("[AutoPlace] Placing plant...")
     local placed = AutoPlace.PlacePlant(plantInfo, randomSpot)
+    
+    if placed then
+        -- Wait a bit before processing next plant
+        task.wait(0.1)
+        
+        -- Try to destroy the model from backpack (cleanup)
+        pcall(function()
+            plantModel:Destroy()
+        end)
+    end
     
     return placed
 end
@@ -388,22 +409,38 @@ function AutoPlace.SetupEventListeners()
     
     -- Listen for new items added to backpack
     AutoPlace.BackpackConnection = AutoPlace.References.Backpack.ChildAdded:Connect(function(item)
-        if item:IsA("Model") and AutoPlace.Settings.AutoPlaceEnabled and AutoPlace.IsRunning then
-            -- Quick pre-check: Is this a valid plant name?
-            local isValid, matchedName = AutoPlace.IsValidPlantName(item.Name)
-            if not isValid then
-                -- Skip - not a plant or doesn't match any known plants
-                return
-            end
-            
-            task.wait(0.1) -- Small delay to let item fully load
-            
-            print("[AutoPlace] New plant detected in backpack:", item.Name, "→", matchedName)
-            
-            task.spawn(function()
-                AutoPlace.ProcessPlant(item)
-            end)
+        print("[AutoPlace] Item added to backpack:", item.Name, "| Type:", item.ClassName)
+        
+        if not item:IsA("Model") then
+            print("[AutoPlace] Skipped - Not a Model")
+            return
         end
+        
+        if not AutoPlace.Settings.AutoPlaceEnabled then
+            print("[AutoPlace] Skipped - Auto-place disabled")
+            return
+        end
+        
+        if not AutoPlace.IsRunning then
+            print("[AutoPlace] Skipped - System not running")
+            return
+        end
+        
+        -- Quick pre-check: Is this a valid plant name?
+        local isValid, matchedName = AutoPlace.IsValidPlantName(item.Name)
+        if not isValid then
+            -- Skip - not a plant or doesn't match any known plants
+            print("[AutoPlace] Skipped - Name doesn't match any plant:", item.Name)
+            return
+        end
+        
+        task.wait(0.1) -- Small delay to let item fully load
+        
+        print("[AutoPlace] ✅ New plant detected:", item.Name, "→", matchedName)
+        
+        task.spawn(function()
+            AutoPlace.ProcessPlant(item)
+        end)
     end)
     
     print("✅ [AutoPlace] Event listeners setup!")
