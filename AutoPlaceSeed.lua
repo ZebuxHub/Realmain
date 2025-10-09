@@ -592,6 +592,9 @@ function AutoPlaceSeed.Start()
     
     AutoPlaceSeed.IsRunning = true
     
+    -- CRITICAL: Clear UsedCFrames on fresh start
+    AutoPlaceSeed.UsedCFrames = {}
+    
     -- OPTIMIZED: Build seeds set for fast lookups
     AutoPlaceSeed.RebuildSeedsSet()
     
@@ -609,9 +612,8 @@ function AutoPlaceSeed.Start()
         AutoPlaceSeed.SetupPlotMonitoring()
     end)
     
-    -- Process existing seeds
+    -- CRITICAL: Process existing seeds immediately (no delay)
     task.spawn(function()
-        task.wait(0.2)
         AutoPlaceSeed.ProcessAllSeeds()
     end)
 end
@@ -638,6 +640,7 @@ function AutoPlaceSeed.Stop()
     AutoPlaceSeed.CachedSpots = {}
     AutoPlaceSeed.SpotsCacheValid = false
     AutoPlaceSeed.RowSeedCounts = {}
+    AutoPlaceSeed.UsedCFrames = {}  -- Clear used CFrames
 end
 
 function AutoPlaceSeed.GetStatus()
