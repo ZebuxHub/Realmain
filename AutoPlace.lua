@@ -26,6 +26,9 @@ local AutoPlace = {
     RowPlantCounts = {},  -- {["1"] = 3, ["2"] = 5, ...}
     MaxPlantsPerRow = 5,
     
+    -- Used CFrames (prevent placing in same spot twice)
+    UsedCFrames = {},
+    
     -- Plant Data Cache (avoid repeated ReplicatedStorage reads)
     PlantDataCache = nil,
     PlantNamesList = {},
@@ -305,6 +308,7 @@ end
 function AutoPlace.InvalidateCache()
     AutoPlace.SpotsCacheValid = false
     AutoPlace.RowPlantCounts = {}
+    AutoPlace.UsedCFrames = {}  -- Clear used CFrames
 end
 
 -- Find all available spots in player's plot (with caching)
@@ -345,25 +349,13 @@ function AutoPlace.FindAvailableSpots(forceRescan)
                     for _, spot in ipairs(grass:GetChildren()) do
                         local canPlace = spot:GetAttribute("CanPlace")
                         if canPlace == true then
-                            -- CRITICAL: Check if spot is empty (no stacking!)
-                            local hasItem = false
-                            for _, child in ipairs(spot:GetChildren()) do
-                                if child:IsA("Model") then
-                                    hasItem = true
-                                    break
-                                end
-                            end
-                            
-                            -- Only add empty spots
-                            if not hasItem then
-                                table.insert(spots, {
-                                    Floor = spot,
-                                    CFrame = spot.CFrame,
-                                    PivotOffset = spot.PivotOffset,
-                                    RowName = row.Name,
-                                    SpotName = spot.Name
-                                })
-                            end
+                            table.insert(spots, {
+                                Floor = spot,
+                                CFrame = spot.CFrame,
+                                PivotOffset = spot.PivotOffset,
+                                RowName = row.Name,
+                                SpotName = spot.Name
+                            })
                         end
                     end
                     
@@ -492,24 +484,20 @@ function AutoPlace.ProcessPlant(plantTool)
         local plot = workspace.Plots:FindFirstChild(plotNum)
         if plot and plot:FindFirstChild("Rows") then
             for _, spot in ipairs(spots) do
-                -- CRITICAL: Read "Plants" attribute from Row (game's official count)
-                local row = plot.Rows:FindFirstChild(spot.RowName)
-                if row then
-                    local plantsCount = row:GetAttribute("Plants") or 0
-                    
-                    -- Check if row has space
-                    if plantsCount < AutoPlace.MaxPlantsPerRow then
-                        -- DOUBLE CHECK: Is this specific spot still empty?
-                        local spotIsEmpty = true
-                        for _, child in ipairs(spot.Floor:GetChildren()) do
-                            if child:IsA("Model") then
-                                spotIsEmpty = false
-                                break
-                            end
-                        end
+                -- CRITICAL: Check if this CFrame position is already used
+                local cframeKey = tostring(spot.Floor.CFrame.Position)
+                
+                if not AutoPlace.UsedCFrames[cframeKey] then
+                    -- Read "Plants" attribute from Row (game's official count)
+                    local row = plot.Rows:FindFirstChild(spot.RowName)
+                    if row then
+                        local plantsCount = row:GetAttribute("Plants") or 0
                         
-                        if spotIsEmpty then
+                        -- Check if row has space
+                        if plantsCount < AutoPlace.MaxPlantsPerRow then
                             selectedSpot = spot
+                            -- Mark this CFrame as used
+                            AutoPlace.UsedCFrames[cframeKey] = true
                             break
                         end
                     end
@@ -740,6 +728,7 @@ function AutoPlace.Stop()
     AutoPlace.CachedSpots = {}
     AutoPlace.SpotsCacheValid = false
     AutoPlace.RowPlantCounts = {}
+    AutoPlace.UsedCFrames = {}  -- Clear used CFrames
 end
 
 function AutoPlace.GetStatus()
