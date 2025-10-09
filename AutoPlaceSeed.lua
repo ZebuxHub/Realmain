@@ -193,6 +193,7 @@ end
 function AutoPlaceSeed.ShouldPlaceSeed(seedInput)
     -- Early exit if no seeds selected
     if not next(AutoPlaceSeed.SelectedSeedsSet) then
+        print("[AutoPlaceSeed] ShouldPlaceSeed: No seeds in set")
         return false
     end
     
@@ -203,20 +204,33 @@ function AutoPlaceSeed.ShouldPlaceSeed(seedInput)
     if type(seedInput) == "userdata" and seedInput:IsA("Tool") then
         displayName = seedInput.Name
         plantName = seedInput:GetAttribute("Plant")
+        print("[AutoPlaceSeed] ShouldPlaceSeed: DisplayName =", displayName, "| PlantName =", plantName)
     else
         -- It's a string
         displayName = seedInput
         plantName = ExtractSeedName(displayName)
+        print("[AutoPlaceSeed] ShouldPlaceSeed: DisplayName (string) =", displayName, "| PlantName =", plantName)
     end
     
     -- OPTIMIZED: Direct string comparison (faster than regex)
     -- Check if name ends with " Seed" (minimum 5 chars: "X Seed")
     if #displayName < 5 or string.sub(displayName, -5) ~= " Seed" then
+        print("[AutoPlaceSeed] ShouldPlaceSeed: Name doesn't end with ' Seed'")
         return false
     end
     
+    -- Debug: Print what's in the set
+    print("[AutoPlaceSeed] ShouldPlaceSeed: Checking if '" .. tostring(plantName) .. "' is in set")
+    local setKeys = {}
+    for key, _ in pairs(AutoPlaceSeed.SelectedSeedsSet) do
+        table.insert(setKeys, key)
+    end
+    print("[AutoPlaceSeed] ShouldPlaceSeed: Set contains:", table.concat(setKeys, ", "))
+    
     -- OPTIMIZED: O(1) set lookup instead of O(n) table.find
-    return plantName and AutoPlaceSeed.SelectedSeedsSet[plantName] == true
+    local isInSet = plantName and AutoPlaceSeed.SelectedSeedsSet[plantName] == true
+    print("[AutoPlaceSeed] ShouldPlaceSeed: Result =", isInSet)
+    return isInSet
 end
 
 -- Get seed info from backpack Tool
