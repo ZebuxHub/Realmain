@@ -13,13 +13,15 @@ local AutoBuy = {}
     ========================================
 --]]
 
-AutoBuy.Version = "1.0.1"
+AutoBuy.Version = "2.0.0"  -- Event-driven version
 AutoBuy.IsRunning = false
 AutoBuy.LastCheckTime = 0
 AutoBuy.TotalPurchases = 0
 AutoBuy.LastPurchaseTime = 0
 AutoBuy.LastMoney = 0
 AutoBuy.LastStockCheck = {}
+AutoBuy.MoneyConnection = nil
+AutoBuy.StockConnections = {}
 
 --[[
     ========================================
@@ -183,55 +185,20 @@ function AutoBuy.Stop()
     return true
 end
 
--- Check if there are changes that warrant buying
-function AutoBuy.HasChanges()
-    local currentMoney = AutoBuy.GetMoney()
-    
-    -- Money changed (increased)
-    if currentMoney > AutoBuy.LastMoney then
-        AutoBuy.LastMoney = currentMoney
-        return true, "money increased"
-    end
-    
-    -- Check if stock changed for any seed
-    for _, seedInstance in ipairs(AutoBuy.References.Seeds:GetChildren()) do
-        local seedInfo = AutoBuy.GetSeedInfo(seedInstance)
-        if not seedInfo.Hidden then
-            local lastStock = AutoBuy.LastStockCheck[seedInfo.Name] or 0
-            if seedInfo.Stock > lastStock then
-                AutoBuy.LastStockCheck[seedInfo.Name] = seedInfo.Stock
-                return true, "stock increased for " .. seedInfo.Name
-            end
-        end
-    end
-    
-    return false
-end
-
--- Process one cycle of auto-buying
+-- Process one cycle of auto-buying (called by event listeners)
 function AutoBuy.ProcessCycle()
     -- Check if system is running
     if not AutoBuy.IsRunning then
-        return false
+        return false, 0
     end
     
     -- Check if auto-buy is enabled in settings
     if not AutoBuy.Settings.AutoBuyEnabled then
-        return false
+        return false, 0
     end
     
     -- Record check time
     AutoBuy.LastCheckTime = tick()
-    
-    -- Check if there are changes worth checking
-    local hasChanges, reason = AutoBuy.HasChanges()
-    if not hasChanges then
-        -- No changes, skip this cycle
-        return true, 0
-    end
-    
-    -- Log the reason for checking
-    print("🔔 [AutoBuy] Checking purchases - Reason:", reason)
     
     -- Get all seeds
     local seedList = AutoBuy.GetAllSeeds()
@@ -273,37 +240,113 @@ function AutoBuy.ProcessCycle()
     return true, purchasesMade
 end
 
--- Main loop (called by Main script)
-function AutoBuy.RunLoop()
-    print("🔄 [AutoBuy] Starting main loop...")
+-- Setup event listeners (event-driven approach - no constant polling!)
+function AutoBuy.SetupEventListeners()
+    print("🔧 [AutoBuy] Setting up event listeners...")
     
-    task.spawn(function()
-        local lastLogTime = tick()
+    -- Disconnect old connections if any
+    if AutoBuy.MoneyConnection then
+        AutoBuy.MoneyConnection:Disconnect()
+    end
+    
+    for _, conn in pairs(AutoBuy.StockConnections) do
+        conn:Disconnect()
+    end
+    AutoBuy.StockConnections = {}
+    
+    -- Listen for money changes
+    local moneyValue = AutoBuy.References.LocalPlayer.leaderstats.Money
+    AutoBuy.LastMoney = moneyValue.Value
+    
+    AutoBuy.MoneyConnection = moneyValue:GetPropertyChangedSignal("Value"):Connect(function()
+        local newMoney = moneyValue.Value
         
-        while true do
-            -- Wait for the check interval (dynamic based on settings)
-            task.wait(AutoBuy.Settings.CheckInterval or 0.5)
+        -- Only trigger if money increased and system is enabled
+        if newMoney > AutoBuy.LastMoney and AutoBuy.Settings.AutoBuyEnabled and AutoBuy.IsRunning then
+            print("💰 [AutoBuy] Money increased:", AutoBuy.LastMoney, "→", newMoney)
+            AutoBuy.LastMoney = newMoney
             
-            -- Only process if enabled AND running
-            if AutoBuy.Settings.AutoBuyEnabled and AutoBuy.IsRunning then
-                -- Process one cycle
+            -- Try to buy seeds
+            task.spawn(function()
                 local success, purchasesMade = AutoBuy.ProcessCycle()
-                
-                -- Log if purchases were made
                 if purchasesMade and purchasesMade > 0 then
-                    print("🛒 [AutoBuy] Bought", purchasesMade, "seeds this cycle")
+                    print("🛒 [AutoBuy] Bought", purchasesMade, "seeds")
                 end
-            end
+            end)
+        else
+            AutoBuy.LastMoney = newMoney
+        end
+    end)
+    
+    -- Listen for stock changes on all seeds
+    for _, seedInstance in ipairs(AutoBuy.References.Seeds:GetChildren()) do
+        local seedInfo = AutoBuy.GetSeedInfo(seedInstance)
+        
+        if not seedInfo.Hidden then
+            -- Initialize last stock
+            AutoBuy.LastStockCheck[seedInfo.Name] = seedInfo.Stock
             
-            -- Optional: Status log every 30 seconds if running
-            if tick() - lastLogTime > 30 and AutoBuy.IsRunning then
-                print("🔄 [AutoBuy] Status - Total purchases:", AutoBuy.TotalPurchases, "| Enabled:", AutoBuy.Settings.AutoBuyEnabled and "YES" or "NO")
-                lastLogTime = tick()
+            -- Listen for stock attribute changes
+            local conn = seedInstance:GetAttributeChangedSignal("Stock"):Connect(function()
+                local newStock = seedInstance:GetAttribute("Stock") or 0
+                local oldStock = AutoBuy.LastStockCheck[seedInfo.Name] or 0
+                
+                -- Only trigger if stock increased and system is enabled
+                if newStock > oldStock and AutoBuy.Settings.AutoBuyEnabled and AutoBuy.IsRunning then
+                    print("📦 [AutoBuy] Stock increased for", seedInfo.Name, ":", oldStock, "→", newStock)
+                    AutoBuy.LastStockCheck[seedInfo.Name] = newStock
+                    
+                    -- Try to buy this specific seed if it's selected
+                    if AutoBuy.ShouldBuySeed(seedInfo.Name) then
+                        task.spawn(function()
+                            local currentInfo = AutoBuy.GetSeedInfo(seedInstance)
+                            if AutoBuy.CanAffordSeed(currentInfo) then
+                                AutoBuy.PurchaseSeed(seedInfo.Name)
+                                
+                                if AutoBuy.Brain then
+                                    AutoBuy.Brain.UpdateMoney()
+                                    AutoBuy.Brain.UpdateSeedInfo()
+                                end
+                            end
+                        end)
+                    end
+                else
+                    AutoBuy.LastStockCheck[seedInfo.Name] = newStock
+                end
+            end)
+            
+            table.insert(AutoBuy.StockConnections, conn)
+        end
+    end
+    
+    print("✅ [AutoBuy] Event listeners setup complete!")
+    print("  - Monitoring money changes")
+    print("  - Monitoring stock changes for", #AutoBuy.StockConnections, "seeds")
+end
+
+-- Main initialization (called by Main script)
+function AutoBuy.RunLoop()
+    print("🔄 [AutoBuy] Starting event-driven system...")
+    
+    -- Setup event listeners instead of polling
+    AutoBuy.SetupEventListeners()
+    
+    -- Optional: Periodic status check (every 60 seconds, not for buying!)
+    task.spawn(function()
+        while true do
+            task.wait(60)  -- Check every minute
+            
+            if AutoBuy.IsRunning then
+                print("📊 [AutoBuy] Status Report:")
+                print("  - Total Purchases:", AutoBuy.TotalPurchases)
+                print("  - System:", AutoBuy.Settings.AutoBuyEnabled and "ENABLED" or "DISABLED")
+                print("  - Current Money: $" .. AutoBuy.GetMoney())
             end
         end
     end)
     
-    print("✅ [AutoBuy] Main loop started!")
+    print("✅ [AutoBuy] Event-driven system started!")
+    print("💡 System will auto-buy when money/stock changes!")
 end
 
 --[[
