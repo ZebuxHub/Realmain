@@ -101,14 +101,24 @@ function AutoPlaceSeed.GetOwnedPlot()
     return nil
 end
 
--- Count seeds in a specific row
+-- Count seeds in a specific row (including stacked items in each spot)
 function AutoPlaceSeed.CountSeedsInRow(rowName, grass)
     local count = 0
     if grass then
-        for _, child in ipairs(grass:GetChildren()) do
-            -- Count Models that are NOT Floor (these are placed items)
-            if child:IsA("Model") and child.Name ~= "Floor" then
-                count = count + 1
+        -- Each spot (Floor) can have multiple seeds stacked
+        for _, spot in ipairs(grass:GetChildren()) do
+            if spot:IsA("Model") and spot.Name == "Floor" then
+                -- Count all models inside this spot (stacked seeds)
+                for _, item in ipairs(spot:GetChildren()) do
+                    if item:IsA("Model") then
+                        count = count + 1
+                    end
+                end
+            else
+                -- If it's not a Floor, it might be a direct child seed (old format)
+                if spot:IsA("Model") and spot.Name ~= "Floor" then
+                    count = count + 1
+                end
             end
         end
     end
