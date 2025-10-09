@@ -27,6 +27,7 @@ local AutoPlaceSeed = {
     MaxSeedsPerRow = 5,
     
     -- Event Connections
+    BackpackConnection = nil,
     PlotAttributeConnections = {},
     
     -- Dependencies (Set by Main.lua)
@@ -164,34 +165,73 @@ function AutoPlaceSeed.FindAvailableSpots(forceRescan)
     return spots
 end
 
--- Check if should place this seed
-function AutoPlaceSeed.ShouldPlaceSeed(seedName)
+-- Extract seed name (remove " Seed" suffix if present)
+local function ExtractSeedName(fullName)
+    -- Pattern: "Cactus Seed" -> "Cactus"
+    local seedName = fullName:match("(.+)%s+Seed$")
+    if seedName then
+        return seedName
+    end
+    return fullName  -- Return as-is if no " Seed" suffix
+end
+
+-- Check if should place this seed (can pass seed name or Tool)
+function AutoPlaceSeed.ShouldPlaceSeed(seedInput)
     local selectedSeeds = AutoPlaceSeed.Settings.SelectedSeedsToPlace
     
     -- If no seeds selected, don't place anything
-    if #selectedSeeds == 0 then
+    if not selectedSeeds or #selectedSeeds == 0 then
         return false
     end
     
+    local seedName
+    local plantName
+    
+    -- If it's a Tool, get attributes
+    if type(seedInput) == "userdata" and seedInput:IsA("Tool") then
+        seedName = seedInput:GetAttribute("Seed") or seedInput:GetAttribute("ItemName") or seedInput.Name
+        plantName = seedInput:GetAttribute("Plant")
+    else
+        -- It's a string
+        seedName = seedInput
+        plantName = ExtractSeedName(seedInput)
+    end
+    
     -- Check if seed is in selected list
-    return table.find(selectedSeeds, seedName) ~= nil
+    -- Try: Plant name (Cactus), Seed name (Cactus Seed), or extracted name
+    return table.find(selectedSeeds, plantName) ~= nil or 
+           table.find(selectedSeeds, seedName) ~= nil or
+           table.find(selectedSeeds, ExtractSeedName(seedName)) ~= nil
 end
 
 -- Get seed info from backpack Tool
 function AutoPlaceSeed.GetSeedInfo(seedTool)
     local success, info = pcall(function()
-        local itemName = seedTool.Name
-        local seedName = itemName
+        local displayName = seedTool.Name  -- "[x4] Cactus Seed"
         local id = seedTool:GetAttribute("ID")
         
+        -- If no ID, seed might not be placeable yet
+        if not id then
+            return nil
+        end
+        
+        -- Get attributes (use these for placement)
+        local itemName = seedTool:GetAttribute("ItemName")  -- "Cactus Seed"
+        local seedName = seedTool:GetAttribute("Seed")  -- "Cactus Seed"
+        local plantName = seedTool:GetAttribute("Plant")  -- "Cactus"
+        
+        -- Use ItemName or Seed attribute, fallback to extracting from displayName
+        local finalName = itemName or seedName or ExtractSeedName(displayName)
+        
         return {
-            Name = seedName,
-            OriginalName = itemName,
+            Name = finalName,  -- "Cactus Seed" (what server expects)
+            Plant = plantName,  -- "Cactus" (for display)
+            DisplayName = displayName,  -- "[x4] Cactus Seed"
             ID = id
         }
     end)
     
-    if success then
+    if success and info then
         return info
     end
     return nil
@@ -243,8 +283,10 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
     end
     
     AutoPlaceSeed.IsProcessing = true
+    print("[AutoPlaceSeed] Processing seed:", seedTool.Name)
     
     if not AutoPlaceSeed.IsRunning or not AutoPlaceSeed.Settings.AutoPlaceSeedsEnabled then
+        print("[AutoPlaceSeed] Skipped - System not running or disabled")
         AutoPlaceSeed.IsProcessing = false
         return false
     end
@@ -252,25 +294,33 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
     -- Get seed info
     local seedInfo = AutoPlaceSeed.GetSeedInfo(seedTool)
     if not seedInfo then
+        print("[AutoPlaceSeed] Skipped - Could not get seed info (no ID?)")
         AutoPlaceSeed.IsProcessing = false
         return false
     end
     
-    -- Check if should place this seed
-    if not AutoPlaceSeed.ShouldPlaceSeed(seedInfo.Name) then
+    print("[AutoPlaceSeed] Seed info - Name:", seedInfo.Name, "Plant:", seedInfo.Plant or "N/A", "ID:", seedInfo.ID)
+    
+    -- Check if should place this seed (pass the Tool for accurate checking)
+    if not AutoPlaceSeed.ShouldPlaceSeed(seedTool) then
+        print("[AutoPlaceSeed] Skipped - Not in selected list")
+        print("[AutoPlaceSeed] Selected seeds:", table.concat(AutoPlaceSeed.Settings.SelectedSeedsToPlace or {}, ", "))
         AutoPlaceSeed.IsProcessing = false
         return false
     end
     
     -- Find available spots (uses cache)
     local spots = AutoPlaceSeed.FindAvailableSpots()
+    print("[AutoPlaceSeed] Available spots:", #spots)
     if #spots == 0 then
+        print("[AutoPlaceSeed] Skipped - No available spots!")
         AutoPlaceSeed.IsProcessing = false
         return false
     end
     
     -- Pick first available spot
     local selectedSpot = spots[1]
+    print("[AutoPlaceSeed] Selected spot - Row:", selectedSpot.RowName, "Spot:", selectedSpot.SpotName)
     
     -- Move seed to character (equip)
     local success = pcall(function()
@@ -293,6 +343,7 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
     end)
     
     if not success then
+        print("[AutoPlaceSeed] Failed to equip seed")
         AutoPlaceSeed.IsProcessing = false
         return false
     end
@@ -300,10 +351,14 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
     task.wait(0.1)
     
     -- Place seed
+    print("[AutoPlaceSeed] Placing seed...")
     local placed = AutoPlaceSeed.PlaceSeed(seedInfo, selectedSpot)
     
     if placed then
+        print("[AutoPlaceSeed] ✅ Seed placed successfully!")
         task.wait(0.15)
+    else
+        print("[AutoPlaceSeed] ❌ Failed to place seed")
     end
     
     AutoPlaceSeed.IsProcessing = false
@@ -413,6 +468,34 @@ function AutoPlaceSeed.SetupPlotMonitoring()
     end)
 end
 
+-- Setup backpack event listener for new seeds
+function AutoPlaceSeed.SetupEventListeners()
+    -- Disconnect old connections
+    if AutoPlaceSeed.BackpackConnection then
+        AutoPlaceSeed.BackpackConnection:Disconnect()
+        AutoPlaceSeed.BackpackConnection = nil
+    end
+    
+    -- Listen for new items added to backpack
+    AutoPlaceSeed.BackpackConnection = AutoPlaceSeed.References.Backpack.ChildAdded:Connect(function(item)
+        if not item:IsA("Tool") or not AutoPlaceSeed.Settings.AutoPlaceSeedsEnabled or not AutoPlaceSeed.IsRunning then
+            return
+        end
+        
+        -- Check if this is a seed (has "Seed" in name or matches selected seeds)
+        local itemName = item.Name
+        if not itemName:match("Seed") and not AutoPlaceSeed.ShouldPlaceSeed(itemName) then
+            return
+        end
+        
+        task.spawn(function()
+            task.wait(0.05)  -- Minimal delay for item to load
+            print("[AutoPlaceSeed] New seed detected:", itemName)
+            AutoPlaceSeed.ProcessSeed(item)
+        end)
+    end)
+end
+
 --[[
     ========================================
     Main Control
@@ -425,11 +508,16 @@ function AutoPlaceSeed.Start()
     end
     
     AutoPlaceSeed.IsRunning = true
+    print("[AutoPlaceSeed] Starting seed placement system...")
     
     -- Initial scan
     task.spawn(function()
-        AutoPlaceSeed.FindAvailableSpots(true)
+        local spots = AutoPlaceSeed.FindAvailableSpots(true)
+        print("[AutoPlaceSeed] Found " .. #spots .. " available spots")
     end)
+    
+    -- Setup backpack event listener
+    AutoPlaceSeed.SetupEventListeners()
     
     -- Setup plot monitoring
     task.spawn(function()
@@ -440,7 +528,8 @@ function AutoPlaceSeed.Start()
     -- Process existing seeds
     task.spawn(function()
         task.wait(0.2)
-        AutoPlaceSeed.ProcessAllSeeds()
+        local placed = AutoPlaceSeed.ProcessAllSeeds()
+        print("[AutoPlaceSeed] Processed existing seeds, placed:", placed)
     end)
 end
 
@@ -451,6 +540,13 @@ function AutoPlaceSeed.Stop()
     
     AutoPlaceSeed.IsRunning = false
     
+    -- Disconnect backpack listener
+    if AutoPlaceSeed.BackpackConnection then
+        AutoPlaceSeed.BackpackConnection:Disconnect()
+        AutoPlaceSeed.BackpackConnection = nil
+    end
+    
+    -- Disconnect plot monitors
     for _, conn in ipairs(AutoPlaceSeed.PlotAttributeConnections) do
         conn:Disconnect()
     end
