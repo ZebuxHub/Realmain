@@ -165,10 +165,13 @@ function AutoPlaceSeed.FindAvailableSpots(forceRescan)
         end)
         
         for _, row in ipairs(rowsList) do
-            local grass = row:FindFirstChild("Grass")
-            if grass then
-                -- Check if row has space (< 5 seeds)
-                if AutoPlaceSeed.CanPlaceInRow(row.Name, grass) then
+            -- OPTIMIZED: Read Plants attribute directly (game's official count)
+            local plantsInRow = row:GetAttribute("Plants") or 0
+            
+            -- Skip full rows immediately
+            if plantsInRow < AutoPlaceSeed.MaxSeedsPerRow then
+                local grass = row:FindFirstChild("Grass")
+                if grass then
                     for _, spot in ipairs(grass:GetChildren()) do
                         local canPlace = spot:GetAttribute("CanPlace")
                         if canPlace == true then
@@ -181,10 +184,10 @@ function AutoPlaceSeed.FindAvailableSpots(forceRescan)
                             })
                         end
                     end
+                    
+                    -- Update row count cache from attribute
+                    AutoPlaceSeed.RowSeedCounts[row.Name] = plantsInRow
                 end
-                
-                -- Update row count cache
-                AutoPlaceSeed.RowSeedCounts[row.Name] = AutoPlaceSeed.CountSeedsInRow(row.Name, grass)
             end
         end
     end)
