@@ -30,6 +30,10 @@ local AutoPlace = {
     PlantDataCache = nil,
     PlantNamesList = {},
     
+    -- Auto Pick Up State
+    TotalPickUps = 0,
+    PlantMonitorConnections = {},
+    
     -- Event Connections
     BackpackConnection = nil,
     ChildAddedConnections = {},
@@ -654,9 +658,129 @@ function AutoPlace.GetStatus()
         IsRunning = AutoPlace.IsRunning,
         AutoPlaceEnabled = AutoPlace.Settings.AutoPlaceEnabled,
         TotalPlacements = AutoPlace.TotalPlacements,
+        TotalPickUps = AutoPlace.TotalPickUps,
         SelectedPlants = AutoPlace.Settings.SelectedPlants or {},
         DamageFilter = AutoPlace.Settings.PlantDamageFilter or 0
     }
+end
+
+--[[
+    ========================================
+    Auto Pick Up System (Event-Driven)
+    ========================================
+--]]
+
+-- Check if plant should be picked up based on damage filter
+function AutoPlace.ShouldPickUpPlant(plantModel)
+    if not AutoPlace.Settings.AutoPickUpEnabled then
+        return false
+    end
+    
+    local pickupFilter = AutoPlace.Settings.PickUpDamageFilter or 0
+    if pickupFilter <= 0 then
+        return false  -- No filter set
+    end
+    
+    local damage = plantModel:GetAttribute("Damage") or 0
+    return damage <= pickupFilter
+end
+
+-- Pick up a single plant
+function AutoPlace.PickUpPlant(plantModel)
+    local id = plantModel:GetAttribute("ID")
+    if not id then return false end
+    
+    local damage = plantModel:GetAttribute("Damage") or 0
+    
+    local success = pcall(function()
+        AutoPlace.References.RemoveItemRemote:FireServer(id)
+    end)
+    
+    if success then
+        AutoPlace.TotalPickUps = AutoPlace.TotalPickUps + 1
+    end
+    
+    return success
+end
+
+-- Setup event-driven monitoring for planted items
+function AutoPlace.SetupPickUpMonitoring()
+    -- Disconnect old connections
+    for _, conn in ipairs(AutoPlace.PlantMonitorConnections) do
+        conn:Disconnect()
+    end
+    AutoPlace.PlantMonitorConnections = {}
+    
+    if not AutoPlace.Settings.AutoPickUpEnabled then
+        return
+    end
+    
+    local plotNum = AutoPlace.GetOwnedPlot()
+    if not plotNum then return end
+    
+    pcall(function()
+        local plot = workspace.Plots:FindFirstChild(plotNum)
+        if not plot then return end
+        
+        local plants = plot:FindFirstChild("Plants")
+        if not plants then return end
+        
+        -- Monitor existing plants
+        for _, plantModel in ipairs(plants:GetChildren()) do
+            if plantModel:IsA("Model") then
+                -- Check immediately
+                if AutoPlace.ShouldPickUpPlant(plantModel) then
+                    task.spawn(function()
+                        task.wait(0.1)  -- Small delay to ensure attributes loaded
+                        AutoPlace.PickUpPlant(plantModel)
+                    end)
+                else
+                    -- Monitor for Damage attribute changes
+                    local conn = plantModel:GetAttributeChangedSignal("Damage"):Connect(function()
+                        if AutoPlace.ShouldPickUpPlant(plantModel) then
+                            AutoPlace.PickUpPlant(plantModel)
+                        end
+                    end)
+                    table.insert(AutoPlace.PlantMonitorConnections, conn)
+                end
+            end
+        end
+        
+        -- Monitor NEW plants being added
+        local addedConn = plants.ChildAdded:Connect(function(plantModel)
+            if not plantModel:IsA("Model") then return end
+            
+            task.wait(0.1)  -- Wait for attributes to load
+            
+            -- Check if should pick up immediately
+            if AutoPlace.ShouldPickUpPlant(plantModel) then
+                AutoPlace.PickUpPlant(plantModel)
+            else
+                -- Monitor for future damage changes
+                local damageConn = plantModel:GetAttributeChangedSignal("Damage"):Connect(function()
+                    if AutoPlace.ShouldPickUpPlant(plantModel) then
+                        AutoPlace.PickUpPlant(plantModel)
+                    end
+                end)
+                table.insert(AutoPlace.PlantMonitorConnections, damageConn)
+            end
+        end)
+        
+        table.insert(AutoPlace.PlantMonitorConnections, addedConn)
+    end)
+end
+
+-- Start Auto Pick Up
+function AutoPlace.StartPickUp()
+    AutoPlace.SetupPickUpMonitoring()
+end
+
+-- Stop Auto Pick Up
+function AutoPlace.StopPickUp()
+    for _, conn in ipairs(AutoPlace.PlantMonitorConnections) do
+        conn:Disconnect()
+    end
+    AutoPlace.PlantMonitorConnections = {}
 end
 
 return AutoPlace
