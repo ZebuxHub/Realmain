@@ -267,6 +267,7 @@ function AutoPlace.FindAvailableSpots()
                         table.insert(spots, {
                             Floor = spot,
                             CFrame = spot.CFrame,
+                            PivotOffset = spot.PivotOffset,
                             RowName = row.Name,
                             SpotName = spot.Name
                         })
@@ -304,10 +305,30 @@ end
 -- Place plant at specific spot
 function AutoPlace.PlacePlant(plantInfo, spot)
     local success, err = pcall(function()
+        -- Extract position from Floor's CFrame
+        local position = spot.Floor.CFrame.Position
+        local x, y, z = position.X, position.Y, position.Z
+        
+        -- Get rotation components from PivotOffset
+        -- PivotOffset format: CFrame with rotation matrix
+        local pivot = spot.PivotOffset
+        local r00, r01, r02, r10, r11, r12, r20, r21, r22 = pivot:GetComponents()
+        
+        -- Skip position components (first 3), use only rotation (last 9)
+        -- If pivot is identity or nil, default to identity rotation
+        if not pivot or pivot == CFrame.new() then
+            r00, r01, r02 = 1, 0, 0
+            r10, r11, r12 = 0, 1, 0
+            r20, r21, r22 = 0, 0, 1
+        end
+        
+        -- Construct CFrame with position from Floor and rotation from PivotOffset
+        local placementCFrame = CFrame.new(x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22)
+        
         local args = {
             [1] = {
                 ["ID"] = plantInfo.ID,
-                ["CFrame"] = spot.CFrame,
+                ["CFrame"] = placementCFrame,
                 ["Item"] = plantInfo.Name,
                 ["Floor"] = spot.Floor
             }
