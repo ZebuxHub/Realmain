@@ -181,58 +181,30 @@ function AutoPlaceSeed.ShouldPlaceSeed(seedInput)
     
     -- If no seeds selected, don't place anything
     if not selectedSeeds or #selectedSeeds == 0 then
-        print("[AutoPlaceSeed] No seeds selected in settings")
         return false
     end
     
-    local seedName
+    local displayName
     local plantName
-    local isSeed = false
     
-    -- If it's a Tool, get attributes
+    -- If it's a Tool, get the name
     if type(seedInput) == "userdata" and seedInput:IsA("Tool") then
-        seedName = seedInput:GetAttribute("Seed") or seedInput:GetAttribute("ItemName")
+        displayName = seedInput.Name
         plantName = seedInput:GetAttribute("Plant")
-        
-        -- IMPORTANT: Only process if it has Seed or ItemName attribute (actual seeds)
-        -- This prevents plants from being processed
-        isSeed = seedName ~= nil or seedInput.Name:match("Seed") ~= nil
-        
-        print("[AutoPlaceSeed] Checking Tool - Plant:", plantName, "| Seed:", seedName, "| IsSeed:", isSeed)
-        
-        if not isSeed then
-            print("[AutoPlaceSeed] Skipping - Not a seed (no Seed/ItemName attribute or 'Seed' in name)")
-            return false
-        end
-        
-        -- Use the name for comparison (fallback to display name if no attribute)
-        seedName = seedName or seedInput.Name
     else
         -- It's a string
-        seedName = seedInput
-        plantName = ExtractSeedName(seedInput)
-        
-        -- Check if string contains "Seed"
-        isSeed = seedName:match("Seed") ~= nil
-        print("[AutoPlaceSeed] Checking String - Name:", seedName, "| Extracted:", plantName, "| IsSeed:", isSeed)
-        
-        if not isSeed then
-            print("[AutoPlaceSeed] Skipping - Not a seed (no 'Seed' in name)")
-            return false
-        end
+        displayName = seedInput
+        plantName = ExtractSeedName(displayName)
     end
     
-    print("[AutoPlaceSeed] Selected seeds list:", table.concat(selectedSeeds, ", "))
+    -- STRICT CHECK: Name MUST end with " Seed" (space + Seed)
+    -- This filters out plants like "[1.3 kg] Cactus" but allows "[x4] Cactus Seed"
+    if not displayName:match("%sSeed$") then
+        return false
+    end
     
-    -- Check if seed is in selected list
-    -- Try: Plant name (Cactus), Seed name (Cactus Seed), or extracted name
-    local matchPlant = plantName and table.find(selectedSeeds, plantName) ~= nil
-    local matchSeed = table.find(selectedSeeds, seedName) ~= nil
-    local matchExtracted = table.find(selectedSeeds, ExtractSeedName(seedName)) ~= nil
-    
-    print("[AutoPlaceSeed] Match results - Plant:", matchPlant, "| Seed:", matchSeed, "| Extracted:", matchExtracted)
-    
-    return matchPlant or matchSeed or matchExtracted
+    -- Check if seed is in selected list by Plant name (e.g., "Cactus")
+    return plantName and table.find(selectedSeeds, plantName) ~= nil
 end
 
 -- Get seed info from backpack Tool
@@ -548,18 +520,13 @@ function AutoPlaceSeed.SetupEventListeners()
             return
         end
         
-        -- STRICT CHECK: Only process if it has Seed/ItemName attribute OR "Seed" in name
-        local hasSeedAttr = item:GetAttribute("Seed") ~= nil or item:GetAttribute("ItemName") ~= nil
-        local hasSeedInName = item.Name:match("Seed") ~= nil
-        
-        if not hasSeedAttr and not hasSeedInName then
-            -- This is a plant, not a seed - skip it
+        -- STRICT CHECK: Name MUST end with " Seed"
+        if not item.Name:match("%sSeed$") then
             return
         end
         
         task.spawn(function()
-            task.wait(0.05)  -- Minimal delay for item to load
-            print("[AutoPlaceSeed] New seed detected:", item.Name)
+            task.wait(0.05)
             AutoPlaceSeed.ProcessSeed(item)
         end)
     end)
