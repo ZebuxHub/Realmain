@@ -289,14 +289,22 @@ function AutoPlace.FindAvailableSpots()
     return spots
 end
 
--- Equip plant from backpack
-function AutoPlace.EquipPlant(plantInfo)
+-- Move plant from backpack to character in workspace
+function AutoPlace.MovePlantToCharacter(plantModel)
     local success, err = pcall(function()
-        AutoPlace.References.EquipItemRemote:Fire(plantInfo.Name, plantInfo.ID)
+        local character = AutoPlace.References.LocalPlayer.Character
+        if not character then
+            error("Character not found")
+        end
+        
+        -- Move the plant model from Backpack to Character in workspace
+        plantModel.Parent = character
+        
+        print("[AutoPlace] Moved plant to character:", plantModel.Name)
     end)
     
     if not success then
-        warn("[AutoPlace] Failed to equip plant:", plantInfo.Name, err)
+        warn("[AutoPlace] Failed to move plant to character:", plantModel.Name, err)
     end
     
     return success
@@ -391,15 +399,15 @@ function AutoPlace.ProcessPlant(plantModel)
     local randomSpot = spots[math.random(1, #spots)]
     print("[AutoPlace] Selected Row " .. randomSpot.RowName .. ", Spot " .. randomSpot.SpotName)
     
-    -- Equip plant
-    print("[AutoPlace] Equipping plant...")
-    local equipped = AutoPlace.EquipPlant(plantInfo)
-    if not equipped then
-        warn("[AutoPlace] ❌ Could not equip plant:", plantInfo.Name)
+    -- Move plant from backpack to character
+    print("[AutoPlace] Moving plant to character...")
+    local moved = AutoPlace.MovePlantToCharacter(plantModel)
+    if not moved then
+        warn("[AutoPlace] ❌ Could not move plant to character:", plantInfo.Name)
         return false
     end
     
-    -- Wait a bit for equip to register
+    -- Wait a bit for move to register
     task.wait(0.2)
     
     -- Place plant
@@ -409,11 +417,6 @@ function AutoPlace.ProcessPlant(plantModel)
     if placed then
         -- Wait a bit before processing next plant
         task.wait(0.1)
-        
-        -- Try to destroy the model from backpack (cleanup)
-        pcall(function()
-            plantModel:Destroy()
-        end)
     end
     
     return placed
