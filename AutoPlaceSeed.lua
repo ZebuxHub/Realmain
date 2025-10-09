@@ -219,8 +219,12 @@ function AutoPlaceSeed.GetSeedInfo(seedTool)
         local displayName = seedTool.Name  -- "[x4] Cactus Seed"
         local id = seedTool:GetAttribute("ID")
         
+        print("[AutoPlaceSeed] GetSeedInfo - DisplayName:", displayName)
+        print("[AutoPlaceSeed] GetSeedInfo - ID:", id or "MISSING")
+        
         -- If no ID, seed might not be placeable yet
         if not id then
+            print("[AutoPlaceSeed] GetSeedInfo - No ID found, skipping")
             return nil
         end
         
@@ -229,8 +233,14 @@ function AutoPlaceSeed.GetSeedInfo(seedTool)
         local seedName = seedTool:GetAttribute("Seed")  -- "Cactus Seed"
         local plantName = seedTool:GetAttribute("Plant")  -- "Cactus"
         
+        print("[AutoPlaceSeed] GetSeedInfo - ItemName attr:", itemName or "nil")
+        print("[AutoPlaceSeed] GetSeedInfo - Seed attr:", seedName or "nil")
+        print("[AutoPlaceSeed] GetSeedInfo - Plant attr:", plantName or "nil")
+        
         -- Use ItemName or Seed attribute, fallback to extracting from displayName
         local finalName = itemName or seedName or ExtractSeedName(displayName)
+        
+        print("[AutoPlaceSeed] GetSeedInfo - Final Name chosen:", finalName)
         
         return {
             Name = finalName,  -- "Cactus Seed" (what server expects)
@@ -241,13 +251,21 @@ function AutoPlaceSeed.GetSeedInfo(seedTool)
     end)
     
     if success and info then
+        print("[AutoPlaceSeed] GetSeedInfo - Returning:", info.Name)
         return info
     end
+    print("[AutoPlaceSeed] GetSeedInfo - Failed or nil")
     return nil
 end
 
 -- Place seed at specific spot (centered)
 function AutoPlaceSeed.PlaceSeed(seedInfo, spot)
+    print("[AutoPlaceSeed] PlaceSeed called with:")
+    print("  - ID:", seedInfo.ID)
+    print("  - Item Name:", seedInfo.Name)
+    print("  - Plant Name:", seedInfo.Plant or "N/A")
+    print("  - Row:", spot.RowName, "Spot:", spot.SpotName)
+    
     local success = pcall(function()
         local position = spot.Floor.CFrame.Position
         local x, y, z = position.X, position.Y, position.Z
@@ -264,10 +282,12 @@ function AutoPlaceSeed.PlaceSeed(seedInfo, spot)
         
         local placementCFrame = CFrame.new(x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22)
         
+        print("[AutoPlaceSeed] Firing PlaceItemRemote with Item =", seedInfo.Name)
+        
         AutoPlaceSeed.References.PlaceItemRemote:FireServer({
             ["ID"] = seedInfo.ID,
             ["CFrame"] = placementCFrame,
-            ["Item"] = seedInfo.Name,
+            ["Item"] = seedInfo.Name,  -- This should be "Cactus Seed"
             ["Floor"] = spot.Floor
         })
     end)
