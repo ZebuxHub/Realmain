@@ -499,8 +499,19 @@ function AutoPlace.ProcessPlant(plantTool)
                     
                     -- Check if row has space
                     if plantsCount < AutoPlace.MaxPlantsPerRow then
-                        selectedSpot = spot
-                        break
+                        -- DOUBLE CHECK: Is this specific spot still empty?
+                        local spotIsEmpty = true
+                        for _, child in ipairs(spot.Floor:GetChildren()) do
+                            if child:IsA("Model") then
+                                spotIsEmpty = false
+                                break
+                            end
+                        end
+                        
+                        if spotIsEmpty then
+                            selectedSpot = spot
+                            break
+                        end
                     end
                 end
             end
