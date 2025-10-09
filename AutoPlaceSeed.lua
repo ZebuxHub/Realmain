@@ -327,32 +327,34 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
     -- Pick first available spot
     local selectedSpot = spots[1]
     
-    -- Move seed to character (equip)
-    local success = pcall(function()
-        local character = AutoPlaceSeed.References.LocalPlayer.Character
-        local backpack = AutoPlaceSeed.References.Backpack
-        
-        if not character or not seedTool:IsA("Tool") then
-            return
-        end
-        
-        -- Unequip any currently equipped tools
-        for _, tool in ipairs(character:GetChildren()) do
-            if tool:IsA("Tool") then
-                tool.Parent = backpack
+    -- Move seed to character (equip) if not already equipped
+    local character = AutoPlaceSeed.References.LocalPlayer.Character
+    if seedTool.Parent ~= character then
+        local success = pcall(function()
+            local backpack = AutoPlaceSeed.References.Backpack
+            
+            if not character or not seedTool:IsA("Tool") then
+                return
             end
+            
+            -- Unequip any currently equipped tools
+            for _, tool in ipairs(character:GetChildren()) do
+                if tool:IsA("Tool") and tool ~= seedTool then
+                    tool.Parent = backpack
+                end
+            end
+            
+            -- Equip the seed tool
+            seedTool.Parent = character
+        end)
+        
+        if not success then
+            AutoPlaceSeed.IsProcessing = false
+            return false
         end
         
-        -- Equip the seed tool
-        seedTool.Parent = character
-    end)
-    
-    if not success then
-        AutoPlaceSeed.IsProcessing = false
-        return false
+        task.wait(0.1)
     end
-    
-    task.wait(0.1)
     
     -- Place seed
     local placed = AutoPlaceSeed.PlaceSeed(seedInfo, selectedSpot)
@@ -365,7 +367,7 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
     return placed
 end
 
--- Process all seeds in backpack
+-- Process all seeds in backpack and character
 function AutoPlaceSeed.ProcessAllSeeds()
     if not AutoPlaceSeed.IsRunning or not AutoPlaceSeed.Settings.AutoPlaceSeedsEnabled then
         return 0
@@ -373,15 +375,31 @@ function AutoPlaceSeed.ProcessAllSeeds()
     
     local placed = 0
     
+    -- Check backpack
     for _, item in ipairs(AutoPlaceSeed.References.Backpack:GetChildren()) do
         if item:IsA("Tool") then
-            -- Quick check: Must end with " Seed"
             local itemName = item.Name
             if #itemName >= 5 and string.sub(itemName, -5) == " Seed" then
-                -- Check if selected
                 if AutoPlaceSeed.ShouldPlaceSeed(item) then
                     if AutoPlaceSeed.ProcessSeed(item) then
                         placed = placed + 1
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Check character (seeds might be equipped)
+    local character = AutoPlaceSeed.References.LocalPlayer.Character
+    if character then
+        for _, item in ipairs(character:GetChildren()) do
+            if item:IsA("Tool") then
+                local itemName = item.Name
+                if #itemName >= 5 and string.sub(itemName, -5) == " Seed" then
+                    if AutoPlaceSeed.ShouldPlaceSeed(item) then
+                        if AutoPlaceSeed.ProcessSeed(item) then
+                            placed = placed + 1
+                        end
                     end
                 end
             end
@@ -474,7 +492,7 @@ function AutoPlaceSeed.SetupPlotMonitoring()
     end)
 end
 
--- Setup backpack event listener for new seeds
+-- Setup event listeners for character tool changes
 function AutoPlaceSeed.SetupEventListeners()
     -- Disconnect old connections
     if AutoPlaceSeed.BackpackConnection then
@@ -482,24 +500,34 @@ function AutoPlaceSeed.SetupEventListeners()
         AutoPlaceSeed.BackpackConnection = nil
     end
     
-    -- Listen for new items added to backpack
-    AutoPlaceSeed.BackpackConnection = AutoPlaceSeed.References.Backpack.ChildAdded:Connect(function(item)
-        -- OPTIMIZED: Check name first (fastest check)
-        local itemName = item.Name
-        if #itemName < 5 or string.sub(itemName, -5) ~= " Seed" then
-            return
-        end
-        
-        -- Then check type and state
-        if not item:IsA("Tool") or not AutoPlaceSeed.Settings.AutoPlaceSeedsEnabled or not AutoPlaceSeed.IsRunning then
-            return
-        end
-        
-        task.spawn(function()
-            task.wait(0.05)
-            AutoPlaceSeed.ProcessSeed(item)
+    -- Monitor Character for tool changes (seeds stay in character with new name)
+    local character = AutoPlaceSeed.References.LocalPlayer.Character
+    if character then
+        AutoPlaceSeed.BackpackConnection = character.ChildAdded:Connect(function(item)
+            -- OPTIMIZED: Check name first (fastest check)
+            local itemName = item.Name
+            if #itemName < 5 or string.sub(itemName, -5) ~= " Seed" then
+                return
+            end
+            
+            -- Then check type and state
+            if not item:IsA("Tool") or not AutoPlaceSeed.Settings.AutoPlaceSeedsEnabled or not AutoPlaceSeed.IsRunning then
+                return
+            end
+            
+            -- Check if this seed is selected
+            if not AutoPlaceSeed.ShouldPlaceSeed(item) then
+                return
+            end
+            
+            task.spawn(function()
+                task.wait(0.1)  -- Wait for tool to fully load
+                if item.Parent == character then  -- Still in character
+                    AutoPlaceSeed.ProcessSeed(item)
+                end
+            end)
         end)
-    end)
+    end
 end
 
 --[[
