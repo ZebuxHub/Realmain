@@ -316,6 +316,8 @@ end
 function AutoPlace.MovePlantToCharacter(plantTool)
     local success, err = pcall(function()
         local character = AutoPlace.References.LocalPlayer.Character
+        local backpack = AutoPlace.References.Backpack
+        
         if not character then
             error("Character not found")
         end
@@ -325,8 +327,15 @@ function AutoPlace.MovePlantToCharacter(plantTool)
             error("Item is not a Tool")
         end
         
-        -- Move the plant Tool from Backpack to Character in workspace
-        -- This "equips" the tool to the character
+        -- First, unequip any tool currently equipped (like Shovel)
+        for _, tool in ipairs(character:GetChildren()) do
+            if tool:IsA("Tool") then
+                print("[AutoPlace] Unequipping:", tool.Name)
+                tool.Parent = backpack  -- Move back to backpack
+            end
+        end
+        
+        -- Now equip the plant Tool
         plantTool.Parent = character
         
         print("[AutoPlace] Equipped plant to character:", plantTool.Name)
