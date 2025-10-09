@@ -200,7 +200,11 @@ end
 
 -- Check if plant name matches any known plant (80% similarity, cached)
 function AutoPlace.IsValidPlantName(itemName)
-    local extractedName = ExtractPlantName(itemName)
+    -- CRITICAL: Reject seeds (they end with " Seed")
+    local cleanName = ExtractPlantName(itemName)
+    if #cleanName >= 5 and string.sub(cleanName, -5) == " Seed" then
+        return false  -- This is a seed, not a plant!
+    end
     
     -- Ensure cache is built
     if #AutoPlace.PlantNamesList == 0 then
@@ -209,7 +213,7 @@ function AutoPlace.IsValidPlantName(itemName)
     
     -- Quick lookup against cached names
     for _, plantName in ipairs(AutoPlace.PlantNamesList) do
-        if StringSimilarity(extractedName, plantName) >= 0.8 then
+        if StringSimilarity(cleanName, plantName) >= 0.8 then
             return true
         end
     end
@@ -467,18 +471,20 @@ function AutoPlace.ProcessPlant(plantTool)
     
     -- Pick first available spot and verify row isn't full
     local selectedSpot = nil
-    for _, spot in ipairs(spots) do
-        -- Double-check row count before placing
-        local plotNum = AutoPlace.GetOwnedPlot()
-        if plotNum then
-            local plot = workspace.Plots:FindFirstChild(plotNum)
-            if plot then
-                local rows = plot:FindFirstChild("Rows")
-                if rows then
-                    local row = rows:FindFirstChild(spot.RowName)
-                    if row then
-                        local grass = row:FindFirstChild("Grass")
-                        if grass and AutoPlace.CanPlaceInRow(spot.RowName, grass) then
+    local plotNum = AutoPlace.GetOwnedPlot()
+    
+    if plotNum then
+        local plot = workspace.Plots:FindFirstChild(plotNum)
+        if plot and plot:FindFirstChild("Rows") then
+            for _, spot in ipairs(spots) do
+                -- CRITICAL: Fresh count check right before placing
+                local row = plot.Rows:FindFirstChild(spot.RowName)
+                if row then
+                    local grass = row:FindFirstChild("Grass")
+                    if grass then
+                        -- Count ALL items in this row (including stacked)
+                        local currentCount = AutoPlace.CountPlantsInRow(spot.RowName, grass)
+                        if currentCount < AutoPlace.MaxPlantsPerRow then
                             selectedSpot = spot
                             break
                         end
