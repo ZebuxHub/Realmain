@@ -200,11 +200,6 @@ end
 
 -- Check if should place this seed (can pass seed name or Tool)
 function AutoPlaceSeed.ShouldPlaceSeed(seedInput)
-    -- Early exit if no seeds selected
-    if not next(AutoPlaceSeed.SelectedSeedsSet) then
-        return false
-    end
-    
     local displayName
     
     -- Get display name
@@ -216,6 +211,11 @@ function AutoPlaceSeed.ShouldPlaceSeed(seedInput)
     
     -- Extract clean name (remove [x4] prefix, etc.)
     local cleanName = ExtractCleanName(displayName)
+    
+    -- If no seeds selected, place all seeds
+    if not next(AutoPlaceSeed.SelectedSeedsSet) then
+        return true
+    end
     
     -- OPTIMIZED: O(1) set lookup using clean seed name
     -- Match against exact seed name (e.g., "Cactus Seed")
