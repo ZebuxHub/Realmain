@@ -225,56 +225,35 @@ end
 -- Get seed info from backpack Tool
 function AutoPlaceSeed.GetSeedInfo(seedTool)
     local success, info = pcall(function()
-        local displayName = seedTool.Name  -- "[x4] Cactus Seed"
+        local displayName = seedTool.Name
         local id = seedTool:GetAttribute("ID")
         
-        print("[AutoPlaceSeed] GetSeedInfo - DisplayName:", displayName)
-        print("[AutoPlaceSeed] GetSeedInfo - ID:", id or "MISSING")
-        
-        -- If no ID, seed might not be placeable yet
         if not id then
-            print("[AutoPlaceSeed] GetSeedInfo - No ID found, skipping")
             return nil
         end
         
-        -- Get attributes (use these for placement)
-        local itemName = seedTool:GetAttribute("ItemName")  -- "Cactus Seed"
-        local seedName = seedTool:GetAttribute("Seed")  -- "Cactus Seed"
-        local plantName = seedTool:GetAttribute("Plant")  -- "Cactus"
+        local itemName = seedTool:GetAttribute("ItemName")
+        local seedName = seedTool:GetAttribute("Seed")
+        local plantName = seedTool:GetAttribute("Plant")
         
-        print("[AutoPlaceSeed] GetSeedInfo - ItemName attr:", itemName or "nil")
-        print("[AutoPlaceSeed] GetSeedInfo - Seed attr:", seedName or "nil")
-        print("[AutoPlaceSeed] GetSeedInfo - Plant attr:", plantName or "nil")
-        
-        -- Use ItemName or Seed attribute, fallback to extracting clean name from displayName
         local finalName = itemName or seedName or ExtractCleanName(displayName)
         
-        print("[AutoPlaceSeed] GetSeedInfo - Final Name chosen:", finalName)
-        
         return {
-            Name = finalName,  -- "Cactus Seed" (what server expects)
-            Plant = plantName,  -- "Cactus" (for display)
-            DisplayName = displayName,  -- "[x4] Cactus Seed"
+            Name = finalName,
+            Plant = plantName,
+            DisplayName = displayName,
             ID = id
         }
     end)
     
     if success and info then
-        print("[AutoPlaceSeed] GetSeedInfo - Returning:", info.Name)
         return info
     end
-    print("[AutoPlaceSeed] GetSeedInfo - Failed or nil")
     return nil
 end
 
 -- Place seed at specific spot (centered)
 function AutoPlaceSeed.PlaceSeed(seedInfo, spot)
-    print("[AutoPlaceSeed] PlaceSeed called with:")
-    print("  - ID:", seedInfo.ID)
-    print("  - Item Name:", seedInfo.Name)
-    print("  - Plant Name:", seedInfo.Plant or "N/A")
-    print("  - Row:", spot.RowName, "Spot:", spot.SpotName)
-    
     local success = pcall(function()
         local position = spot.Floor.CFrame.Position
         local x, y, z = position.X, position.Y, position.Z
@@ -291,12 +270,10 @@ function AutoPlaceSeed.PlaceSeed(seedInfo, spot)
         
         local placementCFrame = CFrame.new(x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22)
         
-        print("[AutoPlaceSeed] Firing PlaceItemRemote with Item =", seedInfo.Name)
-        
         AutoPlaceSeed.References.PlaceItemRemote:FireServer({
             ["ID"] = seedInfo.ID,
             ["CFrame"] = placementCFrame,
-            ["Item"] = seedInfo.Name,  -- This should be "Cactus Seed"
+            ["Item"] = seedInfo.Name,
             ["Floor"] = spot.Floor
         })
     end)
@@ -321,10 +298,8 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
     end
     
     AutoPlaceSeed.IsProcessing = true
-    print("[AutoPlaceSeed] Processing seed:", seedTool.Name)
     
     if not AutoPlaceSeed.IsRunning or not AutoPlaceSeed.Settings.AutoPlaceSeedsEnabled then
-        print("[AutoPlaceSeed] Skipped - System not running or disabled")
         AutoPlaceSeed.IsProcessing = false
         return false
     end
@@ -332,33 +307,25 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
     -- Get seed info
     local seedInfo = AutoPlaceSeed.GetSeedInfo(seedTool)
     if not seedInfo then
-        print("[AutoPlaceSeed] Skipped - Could not get seed info (no ID?)")
         AutoPlaceSeed.IsProcessing = false
         return false
     end
     
-    print("[AutoPlaceSeed] Seed info - Name:", seedInfo.Name, "Plant:", seedInfo.Plant or "N/A", "ID:", seedInfo.ID)
-    
-    -- Check if should place this seed (pass the Tool for accurate checking)
+    -- Check if should place this seed
     if not AutoPlaceSeed.ShouldPlaceSeed(seedTool) then
-        print("[AutoPlaceSeed] Skipped - Not in selected list")
-        print("[AutoPlaceSeed] Selected seeds:", table.concat(AutoPlaceSeed.Settings.SelectedSeedsToPlace or {}, ", "))
         AutoPlaceSeed.IsProcessing = false
         return false
     end
     
     -- Find available spots (uses cache)
     local spots = AutoPlaceSeed.FindAvailableSpots()
-    print("[AutoPlaceSeed] Available spots:", #spots)
     if #spots == 0 then
-        print("[AutoPlaceSeed] Skipped - No available spots!")
         AutoPlaceSeed.IsProcessing = false
         return false
     end
     
     -- Pick first available spot
     local selectedSpot = spots[1]
-    print("[AutoPlaceSeed] Selected spot - Row:", selectedSpot.RowName, "Spot:", selectedSpot.SpotName)
     
     -- Move seed to character (equip)
     local success = pcall(function()
@@ -381,7 +348,6 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
     end)
     
     if not success then
-        print("[AutoPlaceSeed] Failed to equip seed")
         AutoPlaceSeed.IsProcessing = false
         return false
     end
@@ -389,14 +355,10 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
     task.wait(0.1)
     
     -- Place seed
-    print("[AutoPlaceSeed] Placing seed...")
     local placed = AutoPlaceSeed.PlaceSeed(seedInfo, selectedSpot)
     
     if placed then
-        print("[AutoPlaceSeed] ✅ Seed placed successfully!")
         task.wait(0.15)
-    else
-        print("[AutoPlaceSeed] ❌ Failed to place seed")
     end
     
     AutoPlaceSeed.IsProcessing = false
@@ -406,31 +368,22 @@ end
 -- Process all seeds in backpack
 function AutoPlaceSeed.ProcessAllSeeds()
     if not AutoPlaceSeed.IsRunning or not AutoPlaceSeed.Settings.AutoPlaceSeedsEnabled then
-        print("[AutoPlaceSeed] ProcessAllSeeds skipped - Not running or disabled")
         return 0
     end
     
     local placed = 0
-    local backpack = AutoPlaceSeed.References.Backpack
     
-    print("[AutoPlaceSeed] Scanning backpack for seeds...")
-    local backpackItems = backpack:GetChildren()
-    print("[AutoPlaceSeed] Found " .. #backpackItems .. " items in backpack")
-    
-    for _, item in ipairs(backpackItems) do
-        print("[AutoPlaceSeed] Checking item:", item.Name, "| Type:", item.ClassName)
-        
+    for _, item in ipairs(AutoPlaceSeed.References.Backpack:GetChildren()) do
         if item:IsA("Tool") then
-            print("[AutoPlaceSeed] Item is a Tool, checking if it's a seed...")
-            
-            -- Check if it's a seed by passing the Tool
-            if AutoPlaceSeed.ShouldPlaceSeed(item) then
-                print("[AutoPlaceSeed] Item matched! Processing...")
-                if AutoPlaceSeed.ProcessSeed(item) then
-                    placed = placed + 1
+            -- Quick check: Must end with " Seed"
+            local itemName = item.Name
+            if #itemName >= 5 and string.sub(itemName, -5) == " Seed" then
+                -- Check if selected
+                if AutoPlaceSeed.ShouldPlaceSeed(item) then
+                    if AutoPlaceSeed.ProcessSeed(item) then
+                        placed = placed + 1
+                    end
                 end
-            else
-                print("[AutoPlaceSeed] Item didn't match selected seeds")
             end
         end
     end
@@ -561,15 +514,13 @@ function AutoPlaceSeed.Start()
     end
     
     AutoPlaceSeed.IsRunning = true
-    print("[AutoPlaceSeed] Starting seed placement system...")
     
     -- OPTIMIZED: Build seeds set for fast lookups
     AutoPlaceSeed.RebuildSeedsSet()
     
     -- Initial scan
     task.spawn(function()
-        local spots = AutoPlaceSeed.FindAvailableSpots(true)
-        print("[AutoPlaceSeed] Found " .. #spots .. " available spots")
+        AutoPlaceSeed.FindAvailableSpots(true)
     end)
     
     -- Setup backpack event listener
@@ -584,8 +535,7 @@ function AutoPlaceSeed.Start()
     -- Process existing seeds
     task.spawn(function()
         task.wait(0.2)
-        local placed = AutoPlaceSeed.ProcessAllSeeds()
-        print("[AutoPlaceSeed] Processed existing seeds, placed:", placed)
+        AutoPlaceSeed.ProcessAllSeeds()
     end)
 end
 
