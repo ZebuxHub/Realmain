@@ -333,19 +333,21 @@ function AutoPlace.MovePlantToCharacter(plantModel)
     return success
 end
 
--- Place plant at specific spot
+-- Place plant at specific spot (centered)
 function AutoPlace.PlacePlant(plantInfo, spot)
     local success, err = pcall(function()
-        -- Extract position from Floor's CFrame
-        local position = spot.Floor.CFrame.Position
+        -- Get Floor's CFrame (center of the spot)
+        local floorCFrame = spot.Floor.CFrame
+        
+        -- Extract center position from Floor
+        local position = floorCFrame.Position
         local x, y, z = position.X, position.Y, position.Z
         
         -- Get rotation components from PivotOffset
         -- PivotOffset format: CFrame with rotation matrix
         local pivot = spot.PivotOffset
-        local r00, r01, r02, r10, r11, r12, r20, r21, r22 = pivot:GetComponents()
+        local _, _, _, r00, r01, r02, r10, r11, r12, r20, r21, r22 = pivot:GetComponents()
         
-        -- Skip position components (first 3), use only rotation (last 9)
         -- If pivot is identity or nil, default to identity rotation
         if not pivot or pivot == CFrame.new() then
             r00, r01, r02 = 1, 0, 0
@@ -353,8 +355,10 @@ function AutoPlace.PlacePlant(plantInfo, spot)
             r20, r21, r22 = 0, 0, 1
         end
         
-        -- Construct CFrame with position from Floor and rotation from PivotOffset
+        -- Construct CFrame with center position from Floor and rotation from PivotOffset
         local placementCFrame = CFrame.new(x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22)
+        
+        print("[AutoPlace] Placing at center: (" .. math.floor(x) .. ", " .. math.floor(y) .. ", " .. math.floor(z) .. ")")
         
         local args = {
             [1] = {
@@ -370,10 +374,10 @@ function AutoPlace.PlacePlant(plantInfo, spot)
     
     if success then
         AutoPlace.TotalPlacements = AutoPlace.TotalPlacements + 1
-        print("[AutoPlace] Placed:", plantInfo.Name, "| DMG:", FormatNumber(plantInfo.Damage))
+        print("[AutoPlace] ✅ Placed:", plantInfo.Name, "| DMG:", FormatNumber(plantInfo.Damage))
         return true
     else
-        warn("[AutoPlace] Failed to place plant:", plantInfo.Name, err)
+        warn("[AutoPlace] ❌ Failed to place plant:", plantInfo.Name, err)
         return false
     end
 end
@@ -430,9 +434,9 @@ function AutoPlace.ProcessPlant(plantModel)
         return false
     end
     
-    -- Pick random spot
-    local randomSpot = spots[math.random(1, #spots)]
-    print("[AutoPlace] Selected Row " .. randomSpot.RowName .. ", Spot " .. randomSpot.SpotName)
+    -- Pick first available spot (predictable, orderly placement)
+    local selectedSpot = spots[1]
+    print("[AutoPlace] Selected Row " .. selectedSpot.RowName .. ", Spot " .. selectedSpot.SpotName)
     
     -- Move plant from backpack to character
     print("[AutoPlace] Moving plant to character...")
@@ -448,11 +452,10 @@ function AutoPlace.ProcessPlant(plantModel)
     
     -- Place plant
     print("[AutoPlace] Placing plant...")
-    local placed = AutoPlace.PlacePlant(plantInfo, randomSpot)
+    local placed = AutoPlace.PlacePlant(plantInfo, selectedSpot)
     
     if placed then
-        -- Invalidate cache since we just placed a plant (spot is now occupied)
-        AutoPlace.InvalidateCache()
+        -- No need to invalidate cache - Row-Level monitoring will update it automatically!
         
         -- Wait a bit before allowing next plant
         task.wait(0.3)
@@ -489,7 +492,32 @@ end
     ========================================
 --]]
 
--- Setup CanPlace attribute monitoring
+-- Update cache incrementally when a spot becomes available/unavailable
+function AutoPlace.UpdateSpotInCache(spot, isAvailable, rowName)
+    if isAvailable then
+        -- Add spot to cache
+        local spotData = {
+            Floor = spot,
+            CFrame = spot.CFrame,
+            PivotOffset = spot.PivotOffset,
+            RowName = rowName,
+            SpotName = spot.Name
+        }
+        table.insert(AutoPlace.CachedSpots, spotData)
+        print("[AutoPlace] ➕ Added spot to cache: Row " .. rowName .. ", Spot " .. spot.Name .. " | Total: " .. #AutoPlace.CachedSpots)
+    else
+        -- Remove spot from cache
+        for i, cachedSpot in ipairs(AutoPlace.CachedSpots) do
+            if cachedSpot.Floor == spot then
+                table.remove(AutoPlace.CachedSpots, i)
+                print("[AutoPlace] ➖ Removed spot from cache: Row " .. rowName .. ", Spot " .. spot.Name .. " | Total: " .. #AutoPlace.CachedSpots)
+                break
+            end
+        end
+    end
+end
+
+-- Setup Row-Level Model tracking (efficient monitoring)
 function AutoPlace.SetupPlotMonitoring()
     -- Disconnect old plot attribute connections
     for _, conn in ipairs(AutoPlace.PlotAttributeConnections) do
@@ -509,27 +537,44 @@ function AutoPlace.SetupPlotMonitoring()
         local rows = plot:FindFirstChild("Rows")
         if not rows then return end
         
-        print("[AutoPlace] Setting up CanPlace monitoring...")
+        print("[AutoPlace] 🔍 Setting up Row-Level monitoring...")
         
         for _, row in ipairs(rows:GetChildren()) do
             local grass = row:FindFirstChild("Grass")
             if grass then
-                for _, spot in ipairs(grass:GetChildren()) do
-                    -- Monitor CanPlace attribute changes
-                    local conn = spot:GetAttributeChangedSignal("CanPlace"):Connect(function()
-                        local canPlace = spot:GetAttribute("CanPlace")
-                        print("[AutoPlace] CanPlace changed on Row " .. row.Name .. ", Spot " .. spot.Name .. ":", canPlace)
-                        
-                        -- Invalidate cache when CanPlace changes
-                        AutoPlace.InvalidateCache()
-                    end)
-                    
-                    table.insert(AutoPlace.PlotAttributeConnections, conn)
-                end
+                -- Monitor ChildAdded in Grass (plant placed → spot occupied)
+                local addedConn = grass.ChildAdded:Connect(function(child)
+                    if child:IsA("Model") then
+                        -- Find the corresponding spot (parent of where plant was placed)
+                        local spot = child.Parent
+                        if spot then
+                            print("[AutoPlace] 🌱 Plant placed in Row " .. row.Name .. ", Spot " .. spot.Name)
+                            AutoPlace.UpdateSpotInCache(spot, false, row.Name)
+                        end
+                    end
+                end)
+                
+                -- Monitor ChildRemoved in Grass (plant removed → spot available)
+                local removedConn = grass.ChildRemoved:Connect(function(child)
+                    if child:IsA("Model") then
+                        -- Plant removed, spot might be available again
+                        local spot = child.Parent
+                        if spot then
+                            local canPlace = spot:GetAttribute("CanPlace")
+                            if canPlace == true then
+                                print("[AutoPlace] 🗑️ Plant removed from Row " .. row.Name .. ", Spot " .. spot.Name)
+                                AutoPlace.UpdateSpotInCache(spot, true, row.Name)
+                            end
+                        end
+                    end
+                end)
+                
+                table.insert(AutoPlace.PlotAttributeConnections, addedConn)
+                table.insert(AutoPlace.PlotAttributeConnections, removedConn)
             end
         end
         
-        print("[AutoPlace] ✅ Monitoring " .. #AutoPlace.PlotAttributeConnections .. " plot spots")
+        print("[AutoPlace] ✅ Monitoring " .. (#AutoPlace.PlotAttributeConnections / 2) .. " rows (ChildAdded/Removed)")
     end)
     
     if not success then
