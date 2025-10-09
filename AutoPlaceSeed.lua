@@ -49,10 +49,17 @@ local AutoPlaceSeed = {
 -- Rebuild selected seeds set for O(1) lookup
 function AutoPlaceSeed.RebuildSeedsSet()
     AutoPlaceSeed.SelectedSeedsSet = {}
+    
+    if not AutoPlaceSeed.Settings then
+        return
+    end
+    
     local selectedSeeds = AutoPlaceSeed.Settings.SelectedSeedsToPlace
-    if selectedSeeds then
+    if selectedSeeds and type(selectedSeeds) == "table" then
         for _, seedName in ipairs(selectedSeeds) do
-            AutoPlaceSeed.SelectedSeedsSet[seedName] = true
+            if seedName and type(seedName) == "string" then
+                AutoPlaceSeed.SelectedSeedsSet[seedName] = true
+            end
         end
     end
 end
@@ -209,12 +216,6 @@ function AutoPlaceSeed.ShouldPlaceSeed(seedInput)
     
     -- Extract clean name (remove [x4] prefix, etc.)
     local cleanName = ExtractCleanName(displayName)
-    
-    -- OPTIMIZED: Direct string comparison (faster than regex)
-    -- Check if name ends with " Seed" (minimum 5 chars: "X Seed")
-    if #cleanName < 5 or string.sub(cleanName, -5) ~= " Seed" then
-        return false
-    end
     
     -- OPTIMIZED: O(1) set lookup using clean seed name
     -- Match against exact seed name (e.g., "Cactus Seed")
