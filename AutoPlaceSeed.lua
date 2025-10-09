@@ -342,17 +342,15 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
         local plot = workspace.Plots:FindFirstChild(plotNum)
         if plot and plot:FindFirstChild("Rows") then
             for _, spot in ipairs(spots) do
-                -- CRITICAL: Fresh count check right before placing
+                -- CRITICAL: Read "Plants" attribute from Row (game's official count)
                 local row = plot.Rows:FindFirstChild(spot.RowName)
                 if row then
-                    local grass = row:FindFirstChild("Grass")
-                    if grass then
-                        -- Count ALL items in this row (including stacked)
-                        local currentCount = AutoPlaceSeed.CountSeedsInRow(spot.RowName, grass)
-                        if currentCount < AutoPlaceSeed.MaxSeedsPerRow then
-                            selectedSpot = spot
-                            break
-                        end
+                    local plantsCount = row:GetAttribute("Plants") or 0
+                    
+                    -- Check if row has space (seeds count as plants in the attribute)
+                    if plantsCount < AutoPlaceSeed.MaxSeedsPerRow then
+                        selectedSpot = spot
+                        break
                     end
                 end
             end
