@@ -199,16 +199,14 @@ end
 -- Place a seed at a specific slot
 function AutoPlace.PlaceSeed(seedName, slot)
     local success, err = pcall(function()
-        local args = {
-            [1] = {
-                ["ID"] = GenerateID(),
-                ["CFrame"] = slot.CFrame,
-                ["Item"] = seedName,
-                ["Floor"] = slot
-            }
+        local data = {
+            ["ID"] = GenerateID(),
+            ["CFrame"] = slot.CFrame,
+            ["Item"] = seedName,
+            ["Floor"] = slot
         }
         
-        AutoPlace.References.PlaceItemRemote:FireServer(unpack(args))
+        AutoPlace.References.PlaceItemRemote:FireServer(data)
         AutoPlace.TotalSeedsPlaced = AutoPlace.TotalSeedsPlaced + 1
         print("[AutoPlace] Placed seed:", seedName, "| Total:", AutoPlace.TotalSeedsPlaced)
         return true
@@ -225,16 +223,14 @@ end
 -- Place a plant at a specific slot
 function AutoPlace.PlacePlant(plantName, slot)
     local success, err = pcall(function()
-        local args = {
-            [1] = {
-                ["ID"] = GenerateID(),
-                ["CFrame"] = slot.CFrame,
-                ["Item"] = plantName,
-                ["Floor"] = slot
-            }
+        local data = {
+            ["ID"] = GenerateID(),
+            ["CFrame"] = slot.CFrame,
+            ["Item"] = plantName,
+            ["Floor"] = slot
         }
         
-        AutoPlace.References.PlaceItemRemote:FireServer(unpack(args))
+        AutoPlace.References.PlaceItemRemote:FireServer(data)
         AutoPlace.TotalPlantsPlaced = AutoPlace.TotalPlantsPlaced + 1
         
         -- Get plant damage for logging
