@@ -345,13 +345,25 @@ function AutoPlace.FindAvailableSpots(forceRescan)
                     for _, spot in ipairs(grass:GetChildren()) do
                         local canPlace = spot:GetAttribute("CanPlace")
                         if canPlace == true then
-                            table.insert(spots, {
-                                Floor = spot,
-                                CFrame = spot.CFrame,
-                                PivotOffset = spot.PivotOffset,
-                                RowName = row.Name,
-                                SpotName = spot.Name
-                            })
+                            -- CRITICAL: Check if spot is empty (no stacking!)
+                            local hasItem = false
+                            for _, child in ipairs(spot:GetChildren()) do
+                                if child:IsA("Model") then
+                                    hasItem = true
+                                    break
+                                end
+                            end
+                            
+                            -- Only add empty spots
+                            if not hasItem then
+                                table.insert(spots, {
+                                    Floor = spot,
+                                    CFrame = spot.CFrame,
+                                    PivotOffset = spot.PivotOffset,
+                                    RowName = row.Name,
+                                    SpotName = spot.Name
+                                })
+                            end
                         end
                     end
                     
