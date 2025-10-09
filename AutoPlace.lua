@@ -308,7 +308,7 @@ end
 function AutoPlace.InvalidateCache()
     AutoPlace.SpotsCacheValid = false
     AutoPlace.RowPlantCounts = {}
-    AutoPlace.UsedCFrames = {}  -- Clear used CFrames
+    -- DON'T clear UsedCFrames here - items are still physically placed!
 end
 
 -- Find all available spots in player's plot (with caching)
@@ -672,6 +672,42 @@ end
     ========================================
 --]]
 
+-- Scan plot and rebuild UsedCFrames from actually placed items
+function AutoPlace.RebuildUsedCFrames()
+    AutoPlace.UsedCFrames = {}
+    
+    local plotNum = AutoPlace.GetOwnedPlot()
+    if not plotNum then return end
+    
+    local plot = workspace.Plots:FindFirstChild(plotNum)
+    if not plot or not plot:FindFirstChild("Rows") then return end
+    
+    -- Scan all rows and grass spots
+    for _, row in ipairs(plot.Rows:GetChildren()) do
+        local grass = row:FindFirstChild("Grass")
+        if grass then
+            for _, spot in ipairs(grass:GetChildren()) do
+                if spot:IsA("Model") and spot.Name == "Floor" then
+                    -- Check if this spot has any items placed
+                    local hasItem = false
+                    for _, child in ipairs(spot:GetChildren()) do
+                        if child:IsA("Model") then
+                            hasItem = true
+                            break
+                        end
+                    end
+                    
+                    -- If spot has item, mark its CFrame as used
+                    if hasItem then
+                        local cframeKey = tostring(spot.CFrame.Position)
+                        AutoPlace.UsedCFrames[cframeKey] = true
+                    end
+                end
+            end
+        end
+    end
+end
+
 function AutoPlace.Start()
     if AutoPlace.IsRunning then
         return
@@ -679,11 +715,11 @@ function AutoPlace.Start()
     
     AutoPlace.IsRunning = true
     
-    -- CRITICAL: Clear UsedCFrames on fresh start
-    AutoPlace.UsedCFrames = {}
-    
     -- OPTIMIZED: Build plants set for fast lookups
     AutoPlace.RebuildPlantsSet()
+    
+    -- CRITICAL: Rebuild UsedCFrames from what's already placed
+    AutoPlace.RebuildUsedCFrames()
     
     -- Initial scan
     task.spawn(function()
@@ -699,8 +735,9 @@ function AutoPlace.Start()
         AutoPlace.SetupPlotMonitoring()
     end)
     
-    -- CRITICAL: Process existing plants immediately (no delay)
+    -- Process existing plants
     task.spawn(function()
+        task.wait(0.2)  -- Reduced: Process plants sooner
         AutoPlace.ProcessAllPlants()
     end)
 end
@@ -730,7 +767,7 @@ function AutoPlace.Stop()
     AutoPlace.CachedSpots = {}
     AutoPlace.SpotsCacheValid = false
     AutoPlace.RowPlantCounts = {}
-    AutoPlace.UsedCFrames = {}  -- Clear used CFrames
+    -- DON'T clear UsedCFrames - only clear when actually removing items from plot
 end
 
 function AutoPlace.GetStatus()
