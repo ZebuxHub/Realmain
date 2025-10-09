@@ -138,7 +138,7 @@ end
 function AutoPlaceSeed.InvalidateCache()
     AutoPlaceSeed.SpotsCacheValid = false
     AutoPlaceSeed.RowSeedCounts = {}
-    AutoPlaceSeed.UsedCFrames = {}  -- Clear used CFrames
+    -- DON'T clear UsedCFrames here - items are still physically placed!
 end
 
 -- Find all available spots in player's plot (with caching and row limits)
@@ -585,6 +585,42 @@ end
     ========================================
 --]]
 
+-- Scan plot and rebuild UsedCFrames from actually placed items
+function AutoPlaceSeed.RebuildUsedCFrames()
+    AutoPlaceSeed.UsedCFrames = {}
+    
+    local plotNum = AutoPlaceSeed.GetOwnedPlot()
+    if not plotNum then return end
+    
+    local plot = workspace.Plots:FindFirstChild(plotNum)
+    if not plot or not plot:FindFirstChild("Rows") then return end
+    
+    -- Scan all rows and grass spots
+    for _, row in ipairs(plot.Rows:GetChildren()) do
+        local grass = row:FindFirstChild("Grass")
+        if grass then
+            for _, spot in ipairs(grass:GetChildren()) do
+                if spot:IsA("Model") and spot.Name == "Floor" then
+                    -- Check if this spot has any items placed
+                    local hasItem = false
+                    for _, child in ipairs(spot:GetChildren()) do
+                        if child:IsA("Model") then
+                            hasItem = true
+                            break
+                        end
+                    end
+                    
+                    -- If spot has item, mark its CFrame as used
+                    if hasItem then
+                        local cframeKey = tostring(spot.CFrame.Position)
+                        AutoPlaceSeed.UsedCFrames[cframeKey] = true
+                    end
+                end
+            end
+        end
+    end
+end
+
 function AutoPlaceSeed.Start()
     if AutoPlaceSeed.IsRunning then
         return
@@ -592,11 +628,11 @@ function AutoPlaceSeed.Start()
     
     AutoPlaceSeed.IsRunning = true
     
-    -- CRITICAL: Clear UsedCFrames on fresh start
-    AutoPlaceSeed.UsedCFrames = {}
-    
     -- OPTIMIZED: Build seeds set for fast lookups
     AutoPlaceSeed.RebuildSeedsSet()
+    
+    -- CRITICAL: Rebuild UsedCFrames from what's already placed
+    AutoPlaceSeed.RebuildUsedCFrames()
     
     -- Initial scan
     task.spawn(function()
@@ -612,8 +648,9 @@ function AutoPlaceSeed.Start()
         AutoPlaceSeed.SetupPlotMonitoring()
     end)
     
-    -- CRITICAL: Process existing seeds immediately (no delay)
+    -- Process existing seeds
     task.spawn(function()
+        task.wait(0.2)
         AutoPlaceSeed.ProcessAllSeeds()
     end)
 end
@@ -640,7 +677,7 @@ function AutoPlaceSeed.Stop()
     AutoPlaceSeed.CachedSpots = {}
     AutoPlaceSeed.SpotsCacheValid = false
     AutoPlaceSeed.RowSeedCounts = {}
-    AutoPlaceSeed.UsedCFrames = {}  -- Clear used CFrames
+    -- DON'T clear UsedCFrames - only clear when actually removing items from plot
 end
 
 function AutoPlaceSeed.GetStatus()
