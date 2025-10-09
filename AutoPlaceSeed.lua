@@ -181,6 +181,7 @@ function AutoPlaceSeed.ShouldPlaceSeed(seedInput)
     
     -- If no seeds selected, don't place anything
     if not selectedSeeds or #selectedSeeds == 0 then
+        print("[AutoPlaceSeed] No seeds selected in settings")
         return false
     end
     
@@ -191,17 +192,25 @@ function AutoPlaceSeed.ShouldPlaceSeed(seedInput)
     if type(seedInput) == "userdata" and seedInput:IsA("Tool") then
         seedName = seedInput:GetAttribute("Seed") or seedInput:GetAttribute("ItemName") or seedInput.Name
         plantName = seedInput:GetAttribute("Plant")
+        print("[AutoPlaceSeed] Checking Tool - Plant:", plantName, "| Seed:", seedName)
     else
         -- It's a string
         seedName = seedInput
         plantName = ExtractSeedName(seedInput)
+        print("[AutoPlaceSeed] Checking String - Name:", seedName, "| Extracted:", plantName)
     end
+    
+    print("[AutoPlaceSeed] Selected seeds list:", table.concat(selectedSeeds, ", "))
     
     -- Check if seed is in selected list
     -- Try: Plant name (Cactus), Seed name (Cactus Seed), or extracted name
-    return table.find(selectedSeeds, plantName) ~= nil or 
-           table.find(selectedSeeds, seedName) ~= nil or
-           table.find(selectedSeeds, ExtractSeedName(seedName)) ~= nil
+    local matchPlant = table.find(selectedSeeds, plantName) ~= nil
+    local matchSeed = table.find(selectedSeeds, seedName) ~= nil
+    local matchExtracted = table.find(selectedSeeds, ExtractSeedName(seedName)) ~= nil
+    
+    print("[AutoPlaceSeed] Match results - Plant:", matchPlant, "| Seed:", matchSeed, "| Extracted:", matchExtracted)
+    
+    return matchPlant or matchSeed or matchExtracted
 end
 
 -- Get seed info from backpack Tool
@@ -368,16 +377,31 @@ end
 -- Process all seeds in backpack
 function AutoPlaceSeed.ProcessAllSeeds()
     if not AutoPlaceSeed.IsRunning or not AutoPlaceSeed.Settings.AutoPlaceSeedsEnabled then
+        print("[AutoPlaceSeed] ProcessAllSeeds skipped - Not running or disabled")
         return 0
     end
     
     local placed = 0
     local backpack = AutoPlaceSeed.References.Backpack
     
-    for _, item in ipairs(backpack:GetChildren()) do
-        if item:IsA("Tool") and AutoPlaceSeed.ShouldPlaceSeed(item.Name) then
-            if AutoPlaceSeed.ProcessSeed(item) then
-                placed = placed + 1
+    print("[AutoPlaceSeed] Scanning backpack for seeds...")
+    local backpackItems = backpack:GetChildren()
+    print("[AutoPlaceSeed] Found " .. #backpackItems .. " items in backpack")
+    
+    for _, item in ipairs(backpackItems) do
+        print("[AutoPlaceSeed] Checking item:", item.Name, "| Type:", item.ClassName)
+        
+        if item:IsA("Tool") then
+            print("[AutoPlaceSeed] Item is a Tool, checking if it's a seed...")
+            
+            -- Check if it's a seed by passing the Tool
+            if AutoPlaceSeed.ShouldPlaceSeed(item) then
+                print("[AutoPlaceSeed] Item matched! Processing...")
+                if AutoPlaceSeed.ProcessSeed(item) then
+                    placed = placed + 1
+                end
+            else
+                print("[AutoPlaceSeed] Item didn't match selected seeds")
             end
         end
     end
