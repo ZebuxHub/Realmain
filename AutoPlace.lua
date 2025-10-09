@@ -16,10 +16,16 @@ local AutoPlace = {
     -- State
     IsRunning = false,
     TotalPlacements = 0,
+    IsProcessing = false,  -- NEW: Prevent concurrent processing
+    
+    -- Cached Spots
+    CachedSpots = {},
+    SpotsCacheValid = false,
     
     -- Event Connections
     BackpackConnection = nil,
     ChildAddedConnections = {},
+    PlotAttributeConnections = {},
     
     -- Dependencies (Set by Main.lua)
     Services = nil,
@@ -217,8 +223,20 @@ function AutoPlace.ShouldPlacePlant(plantInfo)
     end
 end
 
--- Find all available spots in player's plot
-function AutoPlace.FindAvailableSpots()
+-- Invalidate spots cache (call when CanPlace changes)
+function AutoPlace.InvalidateCache()
+    AutoPlace.SpotsCacheValid = false
+    print("[AutoPlace] Cache invalidated - will rescan on next placement")
+end
+
+-- Find all available spots in player's plot (with caching)
+function AutoPlace.FindAvailableSpots(forceRescan)
+    -- Return cached spots if valid and not forcing rescan
+    if AutoPlace.SpotsCacheValid and not forceRescan then
+        print("[AutoPlace] Using cached spots:", #AutoPlace.CachedSpots)
+        return AutoPlace.CachedSpots
+    end
+    
     local spots = {}
     local plotNum = AutoPlace.GetOwnedPlot()
     
@@ -227,7 +245,7 @@ function AutoPlace.FindAvailableSpots()
         return spots
     end
     
-    print("[AutoPlace] Scanning plot #" .. plotNum .. " for available spots...")
+    print("[AutoPlace] 🔄 Scanning plot #" .. plotNum .. " for available spots...")
     
     local success, result = pcall(function()
         local plot = workspace.Plots:FindFirstChild(plotNum)
@@ -285,6 +303,11 @@ function AutoPlace.FindAvailableSpots()
     if not success then
         warn("[AutoPlace] Error scanning plots:", result)
     end
+    
+    -- Cache the results
+    AutoPlace.CachedSpots = spots
+    AutoPlace.SpotsCacheValid = true
+    print("[AutoPlace] ✅ Cache updated with " .. #spots .. " spots")
     
     return spots
 end
@@ -357,8 +380,16 @@ end
 
 -- Process single plant from backpack
 function AutoPlace.ProcessPlant(plantModel)
+    -- Wait if already processing another plant (ONE BY ONE)
+    while AutoPlace.IsProcessing do
+        task.wait(0.1)
+    end
+    
+    AutoPlace.IsProcessing = true
+    
     if not AutoPlace.IsRunning or not AutoPlace.Settings.AutoPlaceEnabled then
         print("[AutoPlace] Skipped - System not running or disabled")
+        AutoPlace.IsProcessing = false
         return false
     end
     
@@ -367,6 +398,7 @@ function AutoPlace.ProcessPlant(plantModel)
     if not isValid then
         -- Skip silently - not a plant or doesn't match any known plants
         print("[AutoPlace] Skipped - Not a valid plant:", plantModel.Name)
+        AutoPlace.IsProcessing = false
         return false
     end
     
@@ -374,6 +406,7 @@ function AutoPlace.ProcessPlant(plantModel)
     local plantInfo = AutoPlace.GetPlantInfo(plantModel)
     if not plantInfo then
         warn("[AutoPlace] Could not read plant info:", plantModel.Name)
+        AutoPlace.IsProcessing = false
         return false
     end
     
@@ -382,16 +415,18 @@ function AutoPlace.ProcessPlant(plantModel)
     -- Check if should place this plant
     if not AutoPlace.ShouldPlacePlant(plantInfo) then
         print("[AutoPlace] Skipped - Does not match filter:", plantInfo.Name)
+        AutoPlace.IsProcessing = false
         return false
     end
     
-    -- Find available spots
+    -- Find available spots (uses cache if valid)
     print("[AutoPlace] Finding available spots...")
     local spots = AutoPlace.FindAvailableSpots()
     print("[AutoPlace] Found", #spots, "available spots")
     
     if #spots == 0 then
         warn("[AutoPlace] ❌ No available spots! All plots full.")
+        AutoPlace.IsProcessing = false
         return false
     end
     
@@ -404,6 +439,7 @@ function AutoPlace.ProcessPlant(plantModel)
     local moved = AutoPlace.MovePlantToCharacter(plantModel)
     if not moved then
         warn("[AutoPlace] ❌ Could not move plant to character:", plantInfo.Name)
+        AutoPlace.IsProcessing = false
         return false
     end
     
@@ -415,10 +451,14 @@ function AutoPlace.ProcessPlant(plantModel)
     local placed = AutoPlace.PlacePlant(plantInfo, randomSpot)
     
     if placed then
-        -- Wait a bit before processing next plant
-        task.wait(0.1)
+        -- Invalidate cache since we just placed a plant (spot is now occupied)
+        AutoPlace.InvalidateCache()
+        
+        -- Wait a bit before allowing next plant
+        task.wait(0.3)
     end
     
+    AutoPlace.IsProcessing = false
     return placed
 end
 
@@ -448,6 +488,54 @@ end
     Event System (Event-Driven)
     ========================================
 --]]
+
+-- Setup CanPlace attribute monitoring
+function AutoPlace.SetupPlotMonitoring()
+    -- Disconnect old plot attribute connections
+    for _, conn in ipairs(AutoPlace.PlotAttributeConnections) do
+        conn:Disconnect()
+    end
+    AutoPlace.PlotAttributeConnections = {}
+    
+    local plotNum = AutoPlace.GetOwnedPlot()
+    if not plotNum then
+        return
+    end
+    
+    local success = pcall(function()
+        local plot = workspace.Plots:FindFirstChild(plotNum)
+        if not plot then return end
+        
+        local rows = plot:FindFirstChild("Rows")
+        if not rows then return end
+        
+        print("[AutoPlace] Setting up CanPlace monitoring...")
+        
+        for _, row in ipairs(rows:GetChildren()) do
+            local grass = row:FindFirstChild("Grass")
+            if grass then
+                for _, spot in ipairs(grass:GetChildren()) do
+                    -- Monitor CanPlace attribute changes
+                    local conn = spot:GetAttributeChangedSignal("CanPlace"):Connect(function()
+                        local canPlace = spot:GetAttribute("CanPlace")
+                        print("[AutoPlace] CanPlace changed on Row " .. row.Name .. ", Spot " .. spot.Name .. ":", canPlace)
+                        
+                        -- Invalidate cache when CanPlace changes
+                        AutoPlace.InvalidateCache()
+                    end)
+                    
+                    table.insert(AutoPlace.PlotAttributeConnections, conn)
+                end
+            end
+        end
+        
+        print("[AutoPlace] ✅ Monitoring " .. #AutoPlace.PlotAttributeConnections .. " plot spots")
+    end)
+    
+    if not success then
+        warn("[AutoPlace] Failed to setup plot monitoring")
+    end
+end
 
 function AutoPlace.SetupEventListeners()
     -- Disconnect old connections
@@ -514,13 +602,13 @@ function AutoPlace.Start()
     AutoPlace.IsRunning = true
     print("[AutoPlace] System starting...")
     
-    -- Initial scan of available plots
+    -- Initial scan of available plots (force rescan to build cache)
     task.spawn(function()
         print("="..string.rep("=", 50))
         print("[AutoPlace] 🔍 INITIAL PLOT SCAN")
         print("="..string.rep("=", 50))
         
-        local spots = AutoPlace.FindAvailableSpots()
+        local spots = AutoPlace.FindAvailableSpots(true)
         
         print("="..string.rep("=", 50))
         print("[AutoPlace] 📊 SCAN RESULTS:")
@@ -548,6 +636,12 @@ function AutoPlace.Start()
     
     -- Setup event-driven system
     AutoPlace.SetupEventListeners()
+    
+    -- Setup plot monitoring (CanPlace attribute changes)
+    task.spawn(function()
+        task.wait(1) -- Wait for initial scan to complete
+        AutoPlace.SetupPlotMonitoring()
+    end)
     
     -- Initial scan of existing plants in backpack
     task.spawn(function()
@@ -581,6 +675,15 @@ function AutoPlace.Stop()
         conn:Disconnect()
     end
     AutoPlace.ChildAddedConnections = {}
+    
+    for _, conn in ipairs(AutoPlace.PlotAttributeConnections) do
+        conn:Disconnect()
+    end
+    AutoPlace.PlotAttributeConnections = {}
+    
+    -- Clear cache
+    AutoPlace.CachedSpots = {}
+    AutoPlace.SpotsCacheValid = false
     
     print("[AutoPlace] System stopped!")
 end
