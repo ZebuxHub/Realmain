@@ -1,32 +1,31 @@
 --[[
     ========================================
-    AutoPlace Module 🌱
+    AutoPlace Module - Plant Vs Brainrot
     ========================================
     Handles automatic seed and plant placement
-    Event-driven and optimized for performance
---]]
+    - Event-driven placement when items added to backpack
+    - Finds available plots and rows automatically
+    - Filters plants by damage threshold
+]]
 
 local AutoPlace = {
     Version = "1.0.0",
-    
-    -- State
     IsRunning = false,
-    IsSeedPlacementActive = false,
-    IsPlantPlacementActive = false,
     
     -- Stats
     TotalSeedsPlaced = 0,
     TotalPlantsPlaced = 0,
     
-    -- Dependencies (Set by Main.lua)
-    Services = {},
-    References = {},
-    Settings = {},
-    Brain = {},
-    
     -- Connections
     BackpackConnection = nil,
-    PlotConnection = nil
+    SeedPlacementEnabled = false,
+    PlantPlacementEnabled = false,
+    
+    -- Dependencies (set by Main.lua)
+    Services = nil,
+    References = nil,
+    Settings = nil,
+    Brain = nil
 }
 
 --[[
@@ -67,17 +66,19 @@ local function FormatNumber(num)
 end
 
 -- Generate unique ID for placement
-local function GenerateID()
-    local HttpService = AutoPlace.Services.HttpService
-    return HttpService:GenerateGUID(false)
+local function GenerateUUID()
+    local template = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'
+    return string.gsub(template, '[xy]', function(c)
+        local v = (c == 'x') and math.random(0, 0xf) or math.random(8, 0xb)
+        return string.format('%x', v)
+    end)
 end
 
--- Get all seeds from ReplicatedStorage
+-- Get all seeds
 function AutoPlace.GetAllSeeds()
     local seedList = {}
-    local Seeds = AutoPlace.References.Seeds
     
-    for _, seedInstance in ipairs(Seeds:GetChildren()) do
+    for _, seedInstance in ipairs(AutoPlace.References.Seeds:GetChildren()) do
         local hidden = seedInstance:GetAttribute("Hidden")
         if not hidden then
             table.insert(seedList, seedInstance.Name)
@@ -88,16 +89,16 @@ function AutoPlace.GetAllSeeds()
     return seedList
 end
 
--- Get all plants from ReplicatedStorage with damage info
+-- Get all plants with their damage values
 function AutoPlace.GetAllPlants()
     local plantList = {}
-    local Plants = AutoPlace.References.Plants
     
-    for _, plantInstance in ipairs(Plants:GetChildren()) do
+    for _, plantInstance in ipairs(AutoPlace.References.Plants:GetChildren()) do
         local damage = plantInstance:GetAttribute("Damage") or 0
         table.insert(plantList, {
             Name = plantInstance.Name,
-            Damage = damage
+            Damage = damage,
+            Instance = plantInstance
         })
     end
     
@@ -109,264 +110,240 @@ function AutoPlace.GetAllPlants()
     return plantList
 end
 
--- Get player's plot number
-function AutoPlace.GetPlayerPlotNumber()
-    local LocalPlayer = AutoPlace.References.LocalPlayer
-    local plotNumber = LocalPlayer:GetAttribute("Plot")
-    return plotNumber
+-- Get player's owned plots
+function AutoPlace.GetOwnedPlots()
+    local ownedPlots = {}
+    local plotAttribute = AutoPlace.References.LocalPlayer:GetAttribute("Plot")
+    
+    if plotAttribute then
+        -- If Plot is a single number
+        if type(plotAttribute) == "number" then
+            table.insert(ownedPlots, tostring(plotAttribute))
+        -- If Plot is a string or table
+        elseif type(plotAttribute) == "string" then
+            table.insert(ownedPlots, plotAttribute)
+        end
+    end
+    
+    return ownedPlots
 end
 
--- Get player's plot
-function AutoPlace.GetPlayerPlot()
-    local plotNumber = AutoPlace.GetPlayerPlotNumber()
-    if not plotNumber then
-        return nil
-    end
+-- Find available floor in owned plots
+function AutoPlace.FindAvailableFloor()
+    local plots = AutoPlace.GetOwnedPlots()
     
-    local Plots = AutoPlace.References.Plots
-    local plot = Plots:FindFirstChild(tostring(plotNumber))
-    return plot
-end
-
--- Get all available grass slots in player's plot
-function AutoPlace.GetAvailableSlots()
-    local slots = {}
-    local plot = AutoPlace.GetPlayerPlot()
-    
-    if not plot then
-        return slots
-    end
-    
-    local Rows = plot:FindFirstChild("Rows")
-    if not Rows then
-        return slots
-    end
-    
-    for _, row in ipairs(Rows:GetChildren()) do
-        local Grass = row:FindFirstChild("Grass")
-        if Grass then
-            for _, slot in ipairs(Grass:GetChildren()) do
-                local canPlace = slot:GetAttribute("CanPlace")
-                if canPlace then
-                    table.insert(slots, {
-                        Slot = slot,
-                        Row = row.Name,
-                        CFrame = slot.CFrame
-                    })
+    for _, plotId in ipairs(plots) do
+        local plot = AutoPlace.References.Plots:FindFirstChild(plotId)
+        
+        if plot then
+            local rows = plot:FindFirstChild("Rows")
+            
+            if rows then
+                for _, row in ipairs(rows:GetChildren()) do
+                    local grass = row:FindFirstChild("Grass")
+                    
+                    if grass then
+                        for _, floor in ipairs(grass:GetChildren()) do
+                            local canPlace = floor:GetAttribute("CanPlace")
+                            
+                            if canPlace then
+                                return floor
+                            end
+                        end
+                    end
                 end
             end
         end
     end
     
-    return slots
+    return nil
 end
 
--- Get item from backpack by name
+-- Get item from backpack
 function AutoPlace.GetItemFromBackpack(itemName)
-    local Backpack = AutoPlace.References.LocalPlayer.Backpack
-    return Backpack:FindFirstChild(itemName)
+    return AutoPlace.References.Backpack:FindFirstChild(itemName)
 end
 
--- Get all plants from backpack
-function AutoPlace.GetPlantsFromBackpack()
-    local plants = {}
-    local Backpack = AutoPlace.References.LocalPlayer.Backpack
+-- Get plant info from backpack model
+function AutoPlace.GetPlantInfoFromModel(model)
+    if not model then return nil end
     
-    for _, item in ipairs(Backpack:GetChildren()) do
-        if item:IsA("Model") or item:IsA("Tool") then
-            -- Check if it exists in Plants folder
-            local plantAsset = AutoPlace.References.Plants:FindFirstChild(item.Name)
-            if plantAsset then
-                local damage = plantAsset:GetAttribute("Damage") or 0
-                table.insert(plants, {
-                    Item = item,
-                    Name = item.Name,
-                    Damage = damage
-                })
-            end
-        end
+    -- Try to find plant data
+    local plantInstance = AutoPlace.References.Plants:FindFirstChild(model.Name)
+    if plantInstance then
+        return {
+            Name = model.Name,
+            Damage = plantInstance:GetAttribute("Damage") or 0,
+            Model = model
+        }
     end
     
-    return plants
+    return nil
 end
 
 --[[
     ========================================
-    Placement Functions
+    Placement Logic
     ========================================
 --]]
 
--- Place a seed at a specific slot
-function AutoPlace.PlaceSeed(seedName, slot)
-    local success, err = pcall(function()
-        local data = {
-            ["ID"] = GenerateID(),
-            ["CFrame"] = slot.CFrame,
+-- Place a seed
+function AutoPlace.PlaceSeed(seedName)
+    local floor = AutoPlace.FindAvailableFloor()
+    
+    if not floor then
+        print("[AutoPlace] No available floor found")
+        return false
+    end
+    
+    -- Get floor position
+    local floorPos = floor.Position
+    local cframe = CFrame.new(floorPos.X, floorPos.Y + 1, floorPos.Z)
+    
+    local args = {
+        [1] = {
+            ["ID"] = GenerateUUID(),
+            ["CFrame"] = cframe,
             ["Item"] = seedName,
-            ["Floor"] = slot
+            ["Floor"] = floor
         }
-        
-        AutoPlace.References.PlaceItemRemote:FireServer(data)
-        AutoPlace.TotalSeedsPlaced = AutoPlace.TotalSeedsPlaced + 1
-        print("[AutoPlace] Placed seed:", seedName, "| Total:", AutoPlace.TotalSeedsPlaced)
-        return true
-    end)
+    }
     
-    if not success then
-        warn("[AutoPlace] Failed to place seed:", err)
-        return false
-    end
-    
-    return success
-end
-
--- Place a plant at a specific slot
-function AutoPlace.PlacePlant(plantName, slot)
     local success, err = pcall(function()
-        local data = {
-            ["ID"] = GenerateID(),
-            ["CFrame"] = slot.CFrame,
-            ["Item"] = plantName,
-            ["Floor"] = slot
-        }
-        
-        AutoPlace.References.PlaceItemRemote:FireServer(data)
-        AutoPlace.TotalPlantsPlaced = AutoPlace.TotalPlantsPlaced + 1
-        
-        -- Get plant damage for logging
-        local plantAsset = AutoPlace.References.Plants:FindFirstChild(plantName)
-        local damage = plantAsset and plantAsset:GetAttribute("Damage") or 0
-        
-        print("[AutoPlace] Placed plant:", plantName, "| DMG:", FormatNumber(damage), "| Total:", AutoPlace.TotalPlantsPlaced)
-        return true
+        AutoPlace.References.PlaceItemRemote:FireServer(unpack(args))
     end)
     
-    if not success then
-        warn("[AutoPlace] Failed to place plant:", err)
+    if success then
+        AutoPlace.TotalSeedsPlaced = AutoPlace.TotalSeedsPlaced + 1
+        print("[AutoPlace] Placed seed:", seedName)
+        return true
+    else
+        print("[AutoPlace] Failed to place seed:", err)
+        return false
+    end
+end
+
+-- Place a plant
+function AutoPlace.PlacePlant(plantName)
+    local floor = AutoPlace.FindAvailableFloor()
+    
+    if not floor then
+        print("[AutoPlace] No available floor found")
         return false
     end
     
-    return success
+    -- Get floor position
+    local floorPos = floor.Position
+    local cframe = CFrame.new(floorPos.X, floorPos.Y + 1, floorPos.Z)
+    
+    local args = {
+        [1] = {
+            ["ID"] = GenerateUUID(),
+            ["CFrame"] = cframe,
+            ["Item"] = plantName,
+            ["Floor"] = floor
+        }
+    }
+    
+    local success, err = pcall(function()
+        AutoPlace.References.PlaceItemRemote:FireServer(unpack(args))
+    end)
+    
+    if success then
+        AutoPlace.TotalPlantsPlaced = AutoPlace.TotalPlantsPlaced + 1
+        print("[AutoPlace] Placed plant:", plantName)
+        return true
+    else
+        print("[AutoPlace] Failed to place plant:", err)
+        return false
+    end
+end
+
+-- Check if plant meets damage filter
+function AutoPlace.MeetsDamageFilter(plantName)
+    local plantInstance = AutoPlace.References.Plants:FindFirstChild(plantName)
+    
+    if not plantInstance then
+        return false
+    end
+    
+    local damage = plantInstance:GetAttribute("Damage") or 0
+    return damage >= AutoPlace.Settings.PlantDamageFilter
+end
+
+-- Check if should place this seed
+function AutoPlace.ShouldPlaceSeed(seedName)
+    if not AutoPlace.Settings.SelectedPlaceSeed then
+        return true -- Place any seed if none selected
+    end
+    
+    return seedName == AutoPlace.Settings.SelectedPlaceSeed
+end
+
+-- Check if should place this plant
+function AutoPlace.ShouldPlacePlant(plantName)
+    -- Check damage filter first
+    if not AutoPlace.MeetsDamageFilter(plantName) then
+        return false
+    end
+    
+    -- If specific plant selected, only place that one
+    if AutoPlace.Settings.SelectedPlacePlant then
+        return plantName == AutoPlace.Settings.SelectedPlacePlant
+    end
+    
+    return true
 end
 
 --[[
     ========================================
-    Auto Placement Logic
+    Backpack Monitoring
     ========================================
 --]]
 
--- Auto place seeds
-function AutoPlace.ProcessSeedPlacement()
-    if not AutoPlace.IsSeedPlacementActive then
+function AutoPlace.OnBackpackItemAdded(item)
+    if not item:IsA("Model") then
         return
     end
     
-    local selectedSeed = AutoPlace.Settings.SelectedPlaceSeed
-    if not selectedSeed then
-        return
-    end
+    -- Check if it's a seed (starts with seed name)
+    local isSeed = AutoPlace.References.Seeds:FindFirstChild(item.Name) ~= nil
     
-    -- Get available slots
-    local slots = AutoPlace.GetAvailableSlots()
-    if #slots == 0 then
-        return
-    end
-    
-    -- Check if seed exists in backpack
-    local seedItem = AutoPlace.GetItemFromBackpack(selectedSeed)
-    if not seedItem then
-        return
-    end
-    
-    -- Place seed at first available slot
-    local slot = slots[1].Slot
-    AutoPlace.PlaceSeed(selectedSeed, slot)
-end
-
--- Auto place plants
-function AutoPlace.ProcessPlantPlacement()
-    if not AutoPlace.IsPlantPlacementActive then
-        return
-    end
-    
-    -- Get available slots
-    local slots = AutoPlace.GetAvailableSlots()
-    if #slots == 0 then
-        return
-    end
-    
-    -- Get all plants from backpack
-    local plants = AutoPlace.GetPlantsFromBackpack()
-    if #plants == 0 then
-        return
-    end
-    
-    local selectedPlant = AutoPlace.Settings.SelectedPlacePlant
-    local damageFilter = AutoPlace.Settings.PlantDamageFilter or 0
-    
-    -- Place plants
-    for _, plantData in ipairs(plants) do
-        if #slots == 0 then
-            break
+    if isSeed and AutoPlace.SeedPlacementEnabled then
+        if AutoPlace.ShouldPlaceSeed(item.Name) then
+            task.spawn(function()
+                task.wait(0.1) -- Small delay to ensure it's in backpack
+                AutoPlace.PlaceSeed(item.Name)
+            end)
         end
-        
-        local shouldPlace = false
-        
-        -- Check if matches selected plant
-        if selectedPlant and plantData.Name == selectedPlant then
-            shouldPlace = true
-        -- Or check if damage meets filter
-        elseif plantData.Damage >= damageFilter then
-            shouldPlace = true
-        end
-        
-        if shouldPlace then
-            local slot = table.remove(slots, 1)
-            AutoPlace.PlacePlant(plantData.Name, slot.Slot)
-            task.wait(0.1) -- Small delay between placements
+    end
+    
+    -- Check if it's a plant
+    local plantInfo = AutoPlace.GetPlantInfoFromModel(item)
+    
+    if plantInfo and AutoPlace.PlantPlacementEnabled then
+        if AutoPlace.ShouldPlacePlant(plantInfo.Name) then
+            task.spawn(function()
+                task.wait(0.1) -- Small delay to ensure it's in backpack
+                AutoPlace.PlacePlant(plantInfo.Name)
+            end)
         end
     end
 end
 
---[[
-    ========================================
-    Event-Driven System
-    ========================================
---]]
-
-function AutoPlace.SetupEventListeners()
-    -- Disconnect old connections
+function AutoPlace.SetupBackpackMonitoring()
+    -- Disconnect old connection
     if AutoPlace.BackpackConnection then
         AutoPlace.BackpackConnection:Disconnect()
         AutoPlace.BackpackConnection = nil
     end
     
-    if AutoPlace.PlotConnection then
-        AutoPlace.PlotConnection:Disconnect()
-        AutoPlace.PlotConnection = nil
-    end
-    
-    -- Listen for backpack changes (when seeds/plants are added)
-    local Backpack = AutoPlace.References.LocalPlayer.Backpack
-    AutoPlace.BackpackConnection = Backpack.ChildAdded:Connect(function(item)
-        if not AutoPlace.IsRunning then
-            return
-        end
-        
-        -- Check if it's a seed or plant
-        local isSeed = AutoPlace.References.Seeds:FindFirstChild(item.Name)
-        local isPlant = AutoPlace.References.Plants:FindFirstChild(item.Name)
-        
-        if isSeed and AutoPlace.IsSeedPlacementActive then
-            task.wait(0.2) -- Wait for item to fully load
-            AutoPlace.ProcessSeedPlacement()
-        elseif isPlant and AutoPlace.IsPlantPlacementActive then
-            task.wait(0.2) -- Wait for item to fully load
-            AutoPlace.ProcessPlantPlacement()
-        end
+    -- Listen for items added to backpack
+    AutoPlace.BackpackConnection = AutoPlace.References.Backpack.ChildAdded:Connect(function(item)
+        AutoPlace.OnBackpackItemAdded(item)
     end)
     
-    print("[AutoPlace] Event listeners setup complete!")
+    print("[AutoPlace] Backpack monitoring started")
 end
 
 --[[
@@ -377,74 +354,60 @@ end
 
 function AutoPlace.Start()
     if AutoPlace.IsRunning then
-        print("[AutoPlace] Already running!")
+        print("[AutoPlace] Already running")
         return
     end
     
     AutoPlace.IsRunning = true
-    AutoPlace.SetupEventListeners()
+    AutoPlace.SetupBackpackMonitoring()
     
-    print("[AutoPlace] System started!")
+    print("[AutoPlace] System started")
 end
 
 function AutoPlace.Stop()
     if not AutoPlace.IsRunning then
+        print("[AutoPlace] Not running")
         return
     end
     
     AutoPlace.IsRunning = false
-    AutoPlace.IsSeedPlacementActive = false
-    AutoPlace.IsPlantPlacementActive = false
+    AutoPlace.SeedPlacementEnabled = false
+    AutoPlace.PlantPlacementEnabled = false
     
-    -- Disconnect listeners
+    -- Disconnect backpack monitoring
     if AutoPlace.BackpackConnection then
         AutoPlace.BackpackConnection:Disconnect()
         AutoPlace.BackpackConnection = nil
     end
     
-    if AutoPlace.PlotConnection then
-        AutoPlace.PlotConnection:Disconnect()
-        AutoPlace.PlotConnection = nil
-    end
-    
-    print("[AutoPlace] System stopped!")
+    print("[AutoPlace] System stopped")
 end
 
 function AutoPlace.StartSeedPlacement()
-    AutoPlace.IsSeedPlacementActive = true
-    print("[AutoPlace] Seed placement ENABLED")
-    
-    -- Try to place immediately if items available
-    task.spawn(function()
-        AutoPlace.ProcessSeedPlacement()
-    end)
+    AutoPlace.SeedPlacementEnabled = true
+    print("[AutoPlace] Seed placement enabled")
 end
 
 function AutoPlace.StopSeedPlacement()
-    AutoPlace.IsSeedPlacementActive = false
-    print("[AutoPlace] Seed placement DISABLED")
+    AutoPlace.SeedPlacementEnabled = false
+    print("[AutoPlace] Seed placement disabled")
 end
 
 function AutoPlace.StartPlantPlacement()
-    AutoPlace.IsPlantPlacementActive = true
-    print("[AutoPlace] Plant placement ENABLED")
-    
-    -- Try to place immediately if items available
-    task.spawn(function()
-        AutoPlace.ProcessPlantPlacement()
-    end)
+    AutoPlace.PlantPlacementEnabled = true
+    print("[AutoPlace] Plant placement enabled")
 end
 
 function AutoPlace.StopPlantPlacement()
-    AutoPlace.IsPlantPlacementActive = false
-    print("[AutoPlace] Plant placement DISABLED")
+    AutoPlace.PlantPlacementEnabled = false
+    print("[AutoPlace] Plant placement disabled")
 end
 
 function AutoPlace.GetStatus()
     return {
         IsRunning = AutoPlace.IsRunning,
-        IsSeedPlacementActive = AutoPlace.IsSeedPlacementActive,
-        IsPlantPlacementActive = AutoPlace.IsPlantPlacementActive,
+        SeedPlacementEnabled = AutoPlace.SeedPlacementEnabled,
+        PlantPlacementEnabled = AutoPlace.PlantPlacementEnabled,
         TotalSeedsPlaced = AutoPlace.TotalSeedsPlaced,
         TotalPlantsPlaced = AutoPlace.TotalPlantsPlaced
     }
