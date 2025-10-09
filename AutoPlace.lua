@@ -30,6 +30,9 @@ local AutoPlace = {
     PlantDataCache = nil,
     PlantNamesList = {},
     
+    -- OPTIMIZED: Selected plants as a set for O(1) lookup
+    SelectedPlantsSet = {},
+    
     -- Auto Pick Up State
     TotalPickUps = 0,
     PlantMonitorConnections = {},
@@ -51,6 +54,24 @@ local AutoPlace = {
     Initialization
     ========================================
 --]]
+
+-- Rebuild selected plants set for O(1) lookup
+function AutoPlace.RebuildPlantsSet()
+    AutoPlace.SelectedPlantsSet = {}
+    
+    if not AutoPlace.Settings then
+        return
+    end
+    
+    local selectedPlants = AutoPlace.Settings.SelectedPlants
+    if selectedPlants and type(selectedPlants) == "table" then
+        for _, plantName in ipairs(selectedPlants) do
+            if plantName and type(plantName) == "string" then
+                AutoPlace.SelectedPlantsSet[plantName] = true
+            end
+        end
+    end
+end
 
 function AutoPlace.Init(services, references, settings, brain)
     AutoPlace.Services = services
@@ -223,21 +244,20 @@ function AutoPlace.ShouldPlacePlant(plantInfo)
         return false
     end
     
-    local selectedPlants = AutoPlace.Settings.SelectedPlants or {}
     local damageFilter = AutoPlace.Settings.PlantDamageFilter or 0
     
-    -- If specific plants selected, check if this plant is in the list
-    local hasPlantFilter = #selectedPlants > 0
+    -- Check filters
+    local hasPlantFilter = next(AutoPlace.SelectedPlantsSet) ~= nil
     local hasDamageFilter = damageFilter > 0
     
     if hasPlantFilter and hasDamageFilter then
         -- Both filters: Plant name must match AND damage >= filter
-        local isSelected = table.find(selectedPlants, plantInfo.Name) ~= nil
+        local isSelected = AutoPlace.SelectedPlantsSet[plantInfo.Name] == true
         local meetsMinDamage = plantInfo.Damage >= damageFilter
         return isSelected and meetsMinDamage
     elseif hasPlantFilter then
-        -- Only name filter: Plant must be in selected list
-        return table.find(selectedPlants, plantInfo.Name) ~= nil
+        -- Only name filter: O(1) set lookup
+        return AutoPlace.SelectedPlantsSet[plantInfo.Name] == true
     elseif hasDamageFilter then
         -- Only damage filter: Plant damage >= filter
         return plantInfo.Damage >= damageFilter
@@ -604,6 +624,9 @@ function AutoPlace.Start()
     end
     
     AutoPlace.IsRunning = true
+    
+    -- OPTIMIZED: Build plants set for fast lookups
+    AutoPlace.RebuildPlantsSet()
     
     -- Initial scan
     task.spawn(function()
