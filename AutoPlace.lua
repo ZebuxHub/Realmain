@@ -335,10 +335,13 @@ function AutoPlace.FindAvailableSpots(forceRescan)
         end)
         
         for _, row in ipairs(rowsList) do
-            local grass = row:FindFirstChild("Grass")
-            if grass then
-                -- Check if row has space (< 5 plants)
-                if AutoPlace.CanPlaceInRow(row.Name, grass) then
+            -- OPTIMIZED: Read Plants attribute directly (game's official count)
+            local plantsInRow = row:GetAttribute("Plants") or 0
+            
+            -- Skip full rows immediately
+            if plantsInRow < AutoPlace.MaxPlantsPerRow then
+                local grass = row:FindFirstChild("Grass")
+                if grass then
                     for _, spot in ipairs(grass:GetChildren()) do
                         local canPlace = spot:GetAttribute("CanPlace")
                         if canPlace == true then
@@ -351,10 +354,10 @@ function AutoPlace.FindAvailableSpots(forceRescan)
                             })
                         end
                     end
+                    
+                    -- Update row count cache from attribute
+                    AutoPlace.RowPlantCounts[row.Name] = plantsInRow
                 end
-                
-                -- Update row count cache
-                AutoPlace.RowPlantCounts[row.Name] = AutoPlace.CountPlantsInRow(row.Name, grass)
             end
         end
     end)
@@ -477,17 +480,15 @@ function AutoPlace.ProcessPlant(plantTool)
         local plot = workspace.Plots:FindFirstChild(plotNum)
         if plot and plot:FindFirstChild("Rows") then
             for _, spot in ipairs(spots) do
-                -- CRITICAL: Fresh count check right before placing
+                -- CRITICAL: Read "Plants" attribute from Row (game's official count)
                 local row = plot.Rows:FindFirstChild(spot.RowName)
                 if row then
-                    local grass = row:FindFirstChild("Grass")
-                    if grass then
-                        -- Count ALL items in this row (including stacked)
-                        local currentCount = AutoPlace.CountPlantsInRow(spot.RowName, grass)
-                        if currentCount < AutoPlace.MaxPlantsPerRow then
-                            selectedSpot = spot
-                            break
-                        end
+                    local plantsCount = row:GetAttribute("Plants") or 0
+                    
+                    -- Check if row has space
+                    if plantsCount < AutoPlace.MaxPlantsPerRow then
+                        selectedSpot = spot
+                        break
                     end
                 end
             end
