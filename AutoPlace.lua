@@ -103,17 +103,30 @@ function AutoPlace.GetAllPlants()
     return {}
 end
 
+-- Check if item name matches plant format: [XX.X kg] Name
+local function IsPlantFormat(itemName)
+    -- Check if name starts with [XX.X kg] pattern
+    return string.match(itemName, "^%[%d+%.?%d* kg%]") ~= nil
+end
+
 -- Get plant info from backpack item
 function AutoPlace.GetPlantInfo(plantModel)
     local success, info = pcall(function()
+        local name = plantModel.Name
+        
+        -- Check if it matches plant format
+        if not IsPlantFormat(name) then
+            return nil
+        end
+        
         return {
-            Name = plantModel.Name,
+            Name = name,
             ID = plantModel:GetAttribute("ID"),
             Damage = plantModel:GetAttribute("Damage") or 0
         }
     end)
     
-    if success and info.ID then
+    if success and info and info.ID then
         return info
     end
     
@@ -282,7 +295,8 @@ function AutoPlace.ProcessAllPlants()
     local placed = 0
     
     for _, item in ipairs(AutoPlace.References.Backpack:GetChildren()) do
-        if item:IsA("Model") then
+        -- Only process items that match plant format [XX.X kg] Name
+        if item:IsA("Model") and IsPlantFormat(item.Name) then
             local success = AutoPlace.ProcessPlant(item)
             if success then
                 placed = placed + 1
@@ -314,7 +328,8 @@ function AutoPlace.SetupEventListeners()
     
     -- Listen for new items added to backpack
     AutoPlace.BackpackConnection = AutoPlace.References.Backpack.ChildAdded:Connect(function(item)
-        if item:IsA("Model") and AutoPlace.Settings.AutoPlaceEnabled and AutoPlace.IsRunning then
+        -- Only process items that match plant format [XX.X kg] Name
+        if item:IsA("Model") and IsPlantFormat(item.Name) and AutoPlace.Settings.AutoPlaceEnabled and AutoPlace.IsRunning then
             task.wait(0.1) -- Small delay to let item fully load
             
             print("[AutoPlace] New plant detected in backpack:", item.Name)
