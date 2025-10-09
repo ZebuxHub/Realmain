@@ -223,37 +223,67 @@ function AutoPlace.FindAvailableSpots()
     local plotNum = AutoPlace.GetOwnedPlot()
     
     if not plotNum then
+        warn("[AutoPlace] Could not find owned plot number!")
         return spots
     end
+    
+    print("[AutoPlace] Scanning plot #" .. plotNum .. " for available spots...")
     
     local success, result = pcall(function()
         local plot = workspace.Plots:FindFirstChild(plotNum)
         if not plot then
+            warn("[AutoPlace] Plot not found in workspace:", plotNum)
             return
         end
         
         local rows = plot:FindFirstChild("Rows")
         if not rows then
+            warn("[AutoPlace] Rows folder not found in plot:", plotNum)
             return
         end
         
-        -- Loop through all rows
-        for _, row in ipairs(rows:GetChildren()) do
+        print("[AutoPlace] Found Rows folder, scanning...")
+        
+        -- Loop through all rows (sorted by name)
+        local rowsList = rows:GetChildren()
+        table.sort(rowsList, function(a, b)
+            return tonumber(a.Name) < tonumber(b.Name)
+        end)
+        
+        for _, row in ipairs(rowsList) do
+            print("[AutoPlace] Checking Row:", row.Name)
+            
             local grass = row:FindFirstChild("Grass")
             if grass then
+                print("[AutoPlace] Found Grass folder in Row " .. row.Name)
+                
                 -- Loop through all grass spots
-                for _, spot in ipairs(grass:GetChildren()) do
+                local grassSpots = grass:GetChildren()
+                local availableInRow = 0
+                
+                for _, spot in ipairs(grassSpots) do
                     local canPlace = spot:GetAttribute("CanPlace")
                     if canPlace == true then
                         table.insert(spots, {
                             Floor = spot,
-                            CFrame = spot.CFrame
+                            CFrame = spot.CFrame,
+                            RowName = row.Name,
+                            SpotName = spot.Name
                         })
+                        availableInRow = availableInRow + 1
                     end
                 end
+                
+                print("[AutoPlace] Row " .. row.Name .. ": " .. availableInRow .. " available spots")
+            else
+                print("[AutoPlace] No Grass folder in Row " .. row.Name)
             end
         end
     end)
+    
+    if not success then
+        warn("[AutoPlace] Error scanning plots:", result)
+    end
     
     return spots
 end
@@ -338,7 +368,7 @@ function AutoPlace.ProcessPlant(plantModel)
     
     -- Pick random spot
     local randomSpot = spots[math.random(1, #spots)]
-    print("[AutoPlace] Selected spot:", randomSpot.Floor:GetFullName())
+    print("[AutoPlace] Selected Row " .. randomSpot.RowName .. ", Spot " .. randomSpot.SpotName)
     
     -- Equip plant
     print("[AutoPlace] Equipping plant...")
@@ -460,6 +490,38 @@ function AutoPlace.Start()
     AutoPlace.IsRunning = true
     print("[AutoPlace] System starting...")
     
+    -- Initial scan of available plots
+    task.spawn(function()
+        print("="..string.rep("=", 50))
+        print("[AutoPlace] 🔍 INITIAL PLOT SCAN")
+        print("="..string.rep("=", 50))
+        
+        local spots = AutoPlace.FindAvailableSpots()
+        
+        print("="..string.rep("=", 50))
+        print("[AutoPlace] 📊 SCAN RESULTS:")
+        print("[AutoPlace] Total available spots:", #spots)
+        
+        if #spots > 0 then
+            print("[AutoPlace] ✅ Plots ready for placement!")
+            print("[AutoPlace] Sample spots:")
+            for i = 1, math.min(5, #spots) do
+                local spot = spots[i]
+                print("  - Row " .. spot.RowName .. ", Spot " .. spot.SpotName .. ": " .. spot.Floor:GetFullName())
+            end
+            if #spots > 5 then
+                print("  ... and " .. (#spots - 5) .. " more spots")
+            end
+        else
+            warn("[AutoPlace] ⚠️ No available spots found!")
+            warn("[AutoPlace] Possible issues:")
+            warn("  1. All plots are full")
+            warn("  2. No CanPlace=true attributes found")
+            warn("  3. Player doesn't own a plot")
+        end
+        print("="..string.rep("=", 50))
+    end)
+    
     -- Setup event-driven system
     AutoPlace.SetupEventListeners()
     
@@ -470,6 +532,8 @@ function AutoPlace.Start()
         local placed = AutoPlace.ProcessAllPlants()
         if placed > 0 then
             print("[AutoPlace] Placed", placed, "existing plants")
+        else
+            print("[AutoPlace] No plants in backpack to place")
         end
     end)
     
