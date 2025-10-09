@@ -22,6 +22,10 @@ local AutoPlace = {
     CachedSpots = {},
     SpotsCacheValid = false,
     
+    -- Row Tracking (5 plant/seed limit per row)
+    RowPlantCounts = {},  -- {["1"] = 3, ["2"] = 5, ...}
+    MaxPlantsPerRow = 5,
+    
     -- Plant Data Cache (avoid repeated ReplicatedStorage reads)
     PlantDataCache = nil,
     PlantNamesList = {},
@@ -239,9 +243,29 @@ function AutoPlace.ShouldPlacePlant(plantInfo)
     end
 end
 
+-- Count plants in a specific row
+function AutoPlace.CountPlantsInRow(rowName, grass)
+    local count = 0
+    if grass then
+        for _, child in ipairs(grass:GetChildren()) do
+            if child:IsA("Model") and child.Name ~= "Floor" then
+                count = count + 1
+            end
+        end
+    end
+    return count
+end
+
+-- Check if row has space for more plants (< 5)
+function AutoPlace.CanPlaceInRow(rowName, grass)
+    local count = AutoPlace.CountPlantsInRow(rowName, grass)
+    return count < AutoPlace.MaxPlantsPerRow
+end
+
 -- Invalidate spots cache (call when CanPlace changes)
 function AutoPlace.InvalidateCache()
     AutoPlace.SpotsCacheValid = false
+    AutoPlace.RowPlantCounts = {}
 end
 
 -- Find all available spots in player's plot (with caching)
@@ -274,18 +298,24 @@ function AutoPlace.FindAvailableSpots(forceRescan)
         for _, row in ipairs(rowsList) do
             local grass = row:FindFirstChild("Grass")
             if grass then
-                for _, spot in ipairs(grass:GetChildren()) do
-                    local canPlace = spot:GetAttribute("CanPlace")
-                    if canPlace == true then
-                        table.insert(spots, {
-                            Floor = spot,
-                            CFrame = spot.CFrame,
-                            PivotOffset = spot.PivotOffset,
-                            RowName = row.Name,
-                            SpotName = spot.Name
-                        })
+                -- Check if row has space (< 5 plants)
+                if AutoPlace.CanPlaceInRow(row.Name, grass) then
+                    for _, spot in ipairs(grass:GetChildren()) do
+                        local canPlace = spot:GetAttribute("CanPlace")
+                        if canPlace == true then
+                            table.insert(spots, {
+                                Floor = spot,
+                                CFrame = spot.CFrame,
+                                PivotOffset = spot.PivotOffset,
+                                RowName = row.Name,
+                                SpotName = spot.Name
+                            })
+                        end
                     end
                 end
+                
+                -- Update row count cache
+                AutoPlace.RowPlantCounts[row.Name] = AutoPlace.CountPlantsInRow(row.Name, grass)
             end
         end
     end)
@@ -349,6 +379,11 @@ function AutoPlace.PlacePlant(plantInfo, spot)
     
     if success then
         AutoPlace.TotalPlacements = AutoPlace.TotalPlacements + 1
+        
+        -- Update row plant count
+        if AutoPlace.RowPlantCounts[spot.RowName] then
+            AutoPlace.RowPlantCounts[spot.RowName] = AutoPlace.RowPlantCounts[spot.RowName] + 1
+        end
     end
     
     return success
@@ -492,6 +527,12 @@ function AutoPlace.SetupPlotMonitoring()
                         local spot = child.Parent
                         if spot then
                             AutoPlace.UpdateSpotInCache(spot, false, row.Name)
+                            -- Update row count
+                            if AutoPlace.RowPlantCounts[row.Name] then
+                                AutoPlace.RowPlantCounts[row.Name] = AutoPlace.RowPlantCounts[row.Name] + 1
+                            else
+                                AutoPlace.RowPlantCounts[row.Name] = AutoPlace.CountPlantsInRow(row.Name, grass)
+                            end
                         end
                     end
                 end)
@@ -501,6 +542,12 @@ function AutoPlace.SetupPlotMonitoring()
                         local spot = child.Parent
                         if spot and spot:GetAttribute("CanPlace") == true then
                             AutoPlace.UpdateSpotInCache(spot, true, row.Name)
+                            -- Update row count
+                            if AutoPlace.RowPlantCounts[row.Name] then
+                                AutoPlace.RowPlantCounts[row.Name] = math.max(0, AutoPlace.RowPlantCounts[row.Name] - 1)
+                            else
+                                AutoPlace.RowPlantCounts[row.Name] = AutoPlace.CountPlantsInRow(row.Name, grass)
+                            end
                         end
                     end
                 end)
@@ -599,6 +646,7 @@ function AutoPlace.Stop()
     
     AutoPlace.CachedSpots = {}
     AutoPlace.SpotsCacheValid = false
+    AutoPlace.RowPlantCounts = {}
 end
 
 function AutoPlace.GetStatus()
