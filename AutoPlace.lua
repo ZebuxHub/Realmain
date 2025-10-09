@@ -172,17 +172,17 @@ function AutoPlace.IsValidPlantName(itemName)
     return false, nil
 end
 
--- Get plant info from backpack item
-function AutoPlace.GetPlantInfo(plantModel)
+-- Get plant info from backpack Tool
+function AutoPlace.GetPlantInfo(plantTool)
     local success, info = pcall(function()
-        local itemName = plantModel.Name
+        local itemName = plantTool.Name
         local extractedName = ExtractPlantName(itemName)
         
         return {
             Name = extractedName,
             OriginalName = itemName,
-            ID = plantModel:GetAttribute("ID"),
-            Damage = plantModel:GetAttribute("Damage") or 0
+            ID = plantTool:GetAttribute("ID"),
+            Damage = plantTool:GetAttribute("Damage") or 0
         }
     end)
     
@@ -312,22 +312,28 @@ function AutoPlace.FindAvailableSpots(forceRescan)
     return spots
 end
 
--- Move plant from backpack to character in workspace
-function AutoPlace.MovePlantToCharacter(plantModel)
+-- Move plant tool from backpack to character in workspace
+function AutoPlace.MovePlantToCharacter(plantTool)
     local success, err = pcall(function()
         local character = AutoPlace.References.LocalPlayer.Character
         if not character then
             error("Character not found")
         end
         
-        -- Move the plant model from Backpack to Character in workspace
-        plantModel.Parent = character
+        -- Verify it's a Tool
+        if not plantTool:IsA("Tool") then
+            error("Item is not a Tool")
+        end
         
-        print("[AutoPlace] Moved plant to character:", plantModel.Name)
+        -- Move the plant Tool from Backpack to Character in workspace
+        -- This "equips" the tool to the character
+        plantTool.Parent = character
+        
+        print("[AutoPlace] Equipped plant to character:", plantTool.Name)
     end)
     
     if not success then
-        warn("[AutoPlace] Failed to move plant to character:", plantModel.Name, err)
+        warn("[AutoPlace] Failed to equip plant to character:", err)
     end
     
     return success
@@ -382,8 +388,8 @@ function AutoPlace.PlacePlant(plantInfo, spot)
     end
 end
 
--- Process single plant from backpack
-function AutoPlace.ProcessPlant(plantModel)
+-- Process single plant tool from backpack
+function AutoPlace.ProcessPlant(plantTool)
     -- Wait if already processing another plant (ONE BY ONE)
     while AutoPlace.IsProcessing do
         task.wait(0.1)
@@ -398,18 +404,18 @@ function AutoPlace.ProcessPlant(plantModel)
     end
     
     -- Quick validation: Check if item name matches any known plant (80% similarity)
-    local isValid, matchedName = AutoPlace.IsValidPlantName(plantModel.Name)
+    local isValid, matchedName = AutoPlace.IsValidPlantName(plantTool.Name)
     if not isValid then
         -- Skip silently - not a plant or doesn't match any known plants
-        print("[AutoPlace] Skipped - Not a valid plant:", plantModel.Name)
+        print("[AutoPlace] Skipped - Not a valid plant:", plantTool.Name)
         AutoPlace.IsProcessing = false
         return false
     end
     
     -- Get plant info
-    local plantInfo = AutoPlace.GetPlantInfo(plantModel)
+    local plantInfo = AutoPlace.GetPlantInfo(plantTool)
     if not plantInfo then
-        warn("[AutoPlace] Could not read plant info:", plantModel.Name)
+        warn("[AutoPlace] Could not read plant info:", plantTool.Name)
         AutoPlace.IsProcessing = false
         return false
     end
@@ -438,16 +444,16 @@ function AutoPlace.ProcessPlant(plantModel)
     local selectedSpot = spots[1]
     print("[AutoPlace] Selected Row " .. selectedSpot.RowName .. ", Spot " .. selectedSpot.SpotName)
     
-    -- Move plant from backpack to character
-    print("[AutoPlace] Moving plant to character...")
-    local moved = AutoPlace.MovePlantToCharacter(plantModel)
-    if not moved then
-        warn("[AutoPlace] ❌ Could not move plant to character:", plantInfo.Name)
+    -- Equip plant tool to character (move from backpack to character)
+    print("[AutoPlace] Equipping plant tool to character...")
+    local equipped = AutoPlace.MovePlantToCharacter(plantTool)
+    if not equipped then
+        warn("[AutoPlace] ❌ Could not equip plant to character:", plantInfo.Name)
         AutoPlace.IsProcessing = false
         return false
     end
     
-    -- Wait a bit for move to register
+    -- Wait a bit for equip to register
     task.wait(0.2)
     
     -- Place plant
@@ -474,7 +480,7 @@ function AutoPlace.ProcessAllPlants()
     local placed = 0
     
     for _, item in ipairs(AutoPlace.References.Backpack:GetChildren()) do
-        if item:IsA("Model") then
+        if item:IsA("Tool") then
             local success = AutoPlace.ProcessPlant(item)
             if success then
                 placed = placed + 1
@@ -598,8 +604,8 @@ function AutoPlace.SetupEventListeners()
     AutoPlace.BackpackConnection = AutoPlace.References.Backpack.ChildAdded:Connect(function(item)
         print("[AutoPlace] Item added to backpack:", item.Name, "| Type:", item.ClassName)
         
-        if not item:IsA("Model") then
-            print("[AutoPlace] Skipped - Not a Model")
+        if not item:IsA("Tool") then
+            print("[AutoPlace] Skipped - Not a Tool")
             return
         end
         
