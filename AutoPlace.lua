@@ -45,8 +45,8 @@ local AutoPlace = {
     ChildAddedConnections = {},
     PlotAttributeConnections = {},
     
-    -- Task Management (for spam toggle prevention)
-    InitializationTask = nil,
+    -- Task Management (spam toggle prevention with zero-cost generation)
+    StartGeneration = 0,  -- Increment on each Start(), tasks check if they're outdated
     
     -- Dependencies (Set by Main.lua)
     Services = nil,
@@ -734,6 +734,10 @@ function AutoPlace.Start()
         return
     end
     
+    -- Increment generation FIRST (invalidates all old tasks instantly, zero-cost!)
+    AutoPlace.StartGeneration = AutoPlace.StartGeneration + 1
+    local myGeneration = AutoPlace.StartGeneration
+    
     AutoPlace.IsRunning = true
     
     -- OPTIMIZED: Build plants set for fast lookups
@@ -750,17 +754,17 @@ function AutoPlace.Start()
     -- Setup event system IMMEDIATELY (catch new plants)
     AutoPlace.SetupEventListeners()
     
-    -- Initial scan and process existing plants
-    AutoPlace.InitializationTask = task.spawn(function()
-        -- Check if still running (spam toggle protection)
-        if not AutoPlace.IsRunning then return end
+    -- Initial scan and process existing plants (with generation check)
+    task.spawn(function()
+        -- OPTIMIZED: Single number check (faster than task.cancel())
+        if AutoPlace.StartGeneration ~= myGeneration then return end
         
         AutoPlace.FindAvailableSpots(true)
         
-        if not AutoPlace.IsRunning then return end
-        task.wait(0.05)  -- Minimal delay for scan to complete
+        if AutoPlace.StartGeneration ~= myGeneration then return end
+        task.wait(0.05)
         
-        if not AutoPlace.IsRunning then return end
+        if AutoPlace.StartGeneration ~= myGeneration then return end
         AutoPlace.ProcessAllPlants()
     end)
 end
@@ -772,11 +776,8 @@ function AutoPlace.Stop()
     
     AutoPlace.IsRunning = false
     
-    -- Cancel initialization task if still running
-    if AutoPlace.InitializationTask then
-        task.cancel(AutoPlace.InitializationTask)
-        AutoPlace.InitializationTask = nil
-    end
+    -- Increment generation (all old tasks become invalid instantly, no cancellation needed!)
+    AutoPlace.StartGeneration = AutoPlace.StartGeneration + 1
     
     if AutoPlace.BackpackConnection then
         AutoPlace.BackpackConnection:Disconnect()
