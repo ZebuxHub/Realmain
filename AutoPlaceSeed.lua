@@ -425,11 +425,11 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
     local placed = AutoPlaceSeed.PlaceSeed(seedInfo, selectedSpot)
     
     if placed then
-        -- Wait for server to update the count before invalidating cache
-        task.wait(0.4)
-        
-        -- Invalidate cache so next placement rescans with fresh counts
+        -- Invalidate cache IMMEDIATELY
         AutoPlaceSeed.InvalidateCache()
+        
+        -- Small wait for server to process
+        task.wait(0.15)
     end
     
     AutoPlaceSeed.IsProcessing = false
@@ -490,7 +490,7 @@ function AutoPlaceSeed.ProcessAllSeeds()
     -- If we placed at least 1, immediately check for more seeds (don't wait for retry loop)
     if placed > 0 and AutoPlaceSeed.IsRunning then
         task.defer(function()
-            task.wait(0.3) -- Small delay
+            task.wait(0.1) -- Very small delay
             if AutoPlaceSeed.IsRunning then
                 print("[AutoPlaceSeed] ♻️ Checking for more seeds immediately...")
                 AutoPlaceSeed.ProcessAllSeeds()
@@ -725,7 +725,7 @@ function AutoPlaceSeed.Start()
         -- Keep checking continuously if there are seeds and available spots
         local failedAttempts = 0
         while AutoPlaceSeed.IsRunning and AutoPlaceSeed.StartGeneration == myGeneration do
-            task.wait(2) -- Check every 2 seconds
+            task.wait(0.3) -- Check every 0.3 seconds (very fast to catch when plants are picked up!)
             
             if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
             
