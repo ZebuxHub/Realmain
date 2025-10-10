@@ -198,7 +198,6 @@ function AutoPlaceSeed.InitializeRowCounts()
         end
     end)
     
-    print("[AutoPlaceSeed] 📊 Initialized row counts: " .. totalCount .. " items total")
 end
 
 -- Invalidate spots cache
@@ -414,14 +413,12 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
                 selectedSpot = spot
                 -- Mark this CFrame as used
                 AutoPlaceSeed.UsedCFrames[cframeKey] = true
-                print("[AutoPlaceSeed] ✅ Row " .. spot.RowName .. " has " .. itemCount .. "/5 → Placing")
                 break
             end
         end
     end
     
     if not selectedSpot then
-        print("[AutoPlaceSeed] ⚠️ No available spot found for " .. seedInfo.Name)
         AutoPlaceSeed.IsProcessing = false
         return false
     end
@@ -473,11 +470,9 @@ end
 -- Process all seeds in backpack and character
 function AutoPlaceSeed.ProcessAllSeeds()
     if not AutoPlaceSeed.IsRunning or not AutoPlaceSeed.Settings.AutoPlaceSeedsEnabled then
-        print("[AutoPlaceSeed] ⚠️ ProcessAllSeeds called but system not running!")
         return 0
     end
     
-    print("[AutoPlaceSeed] 📦 Scanning backpack for seeds...")
     local placed = 0
     
     -- Check backpack
@@ -486,12 +481,9 @@ function AutoPlaceSeed.ProcessAllSeeds()
             local itemName = item.Name
             if #itemName >= 5 and string.sub(itemName, -5) == " Seed" then
                 if AutoPlaceSeed.ShouldPlaceSeed(item) then
-                    print("[AutoPlaceSeed] 🌱 Found seed: " .. itemName .. " → Processing...")
                     if AutoPlaceSeed.ProcessSeed(item) then
                         placed = placed + 1
-                        print("[AutoPlaceSeed] ✅ Placed! Total: " .. placed)
                     else
-                        print("[AutoPlaceSeed] ❌ Failed to place " .. itemName)
                     end
                 end
             end
@@ -506,12 +498,9 @@ function AutoPlaceSeed.ProcessAllSeeds()
                 local itemName = item.Name
                 if #itemName >= 5 and string.sub(itemName, -5) == " Seed" then
                     if AutoPlaceSeed.ShouldPlaceSeed(item) then
-                        print("[AutoPlaceSeed] 🌱 Found seed in character: " .. itemName .. " → Processing...")
                         if AutoPlaceSeed.ProcessSeed(item) then
                             placed = placed + 1
-                            print("[AutoPlaceSeed] ✅ Placed! Total: " .. placed)
                         else
-                            print("[AutoPlaceSeed] ❌ Failed to place " .. itemName)
                         end
                     end
                 end
@@ -519,19 +508,16 @@ function AutoPlaceSeed.ProcessAllSeeds()
         end
     end
     
-    print("[AutoPlaceSeed] 📊 Finished scan. Total placed: " .. placed)
     
     -- If we placed at least 1, immediately check for more seeds (don't wait for retry loop)
     if placed > 0 and AutoPlaceSeed.IsRunning then
         task.defer(function()
             task.wait(0.1) -- Very small delay
             if AutoPlaceSeed.IsRunning then
-                print("[AutoPlaceSeed] ♻️ Checking for more seeds immediately...")
                 AutoPlaceSeed.ProcessAllSeeds()
             end
         end)
     elseif placed == 0 then
-        print("[AutoPlaceSeed] ⚠️ Could not place any seeds (rows full or no available spots)")
     end
     
     return placed
@@ -785,7 +771,6 @@ function AutoPlaceSeed.Start()
                         local rowNum = removed:GetAttribute("Row")
                         if rowNum then
                             -- Row count already updated by SetupPlotMonitoring!
-                            print("[AutoPlaceSeed] 🔥 Plant removed from row " .. rowNum .. " → Spot available!")
                             TryProcessSeeds("plant_removed")
                         end
                     end)
@@ -799,14 +784,12 @@ function AutoPlaceSeed.Start()
                         if rowNum then
                             -- Update row count manually (seeds aren't in Floor spots)
                             AutoPlaceSeed.UpdateRowCount(rowNum, -1)
-                            print("[AutoPlaceSeed] 🌱 Seed expired from row " .. rowNum .. " → Spot available!")
                             TryProcessSeeds("seed_expired")
                         end
                     end)
                     table.insert(AutoPlaceSeed.PlotAttributeConnections, seedRemovedConn)
                 end
                 
-                print("[AutoPlaceSeed] 👀 Now monitoring for plant/seed removal (instant reaction!)")
             end
         end
     end) -- end of task.spawn function
