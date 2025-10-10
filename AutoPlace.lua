@@ -540,8 +540,34 @@ function AutoPlace.ProcessPlant(plantTool)
     local placed = AutoPlace.PlacePlant(plantInfo, selectedSpot)
     
     if placed then
-        -- Wait for server to update the Plants attribute and replicate to client
-        task.wait(0.3)
+        -- Wait for the Plants attribute to actually update (with timeout)
+        local plotNum = AutoPlace.GetOwnedPlot()
+        if plotNum then
+            pcall(function()
+                local plot = workspace.Plots:FindFirstChild(tostring(plotNum))
+                local row = plot.Rows:FindFirstChild(selectedSpot.RowName)
+                if row then
+                    local oldCount = row:GetAttribute("Plants") or 0
+                    local startTime = tick()
+                    local maxWait = 2  -- Wait up to 2 seconds
+                    
+                    -- Wait for Plants attribute to change
+                    while (tick() - startTime) < maxWait do
+                        local newCount = row:GetAttribute("Plants") or 0
+                        if newCount > oldCount then
+                            print("[AutoPlace] ✅ Attribute updated: " .. oldCount .. " → " .. newCount)
+                            break
+                        end
+                        task.wait(0.05)
+                    end
+                    
+                    -- If timeout, still continue but warn
+                    if (tick() - startTime) >= maxWait then
+                        warn("[AutoPlace] ⚠️ Attribute did not update in time, continuing anyway")
+                    end
+                end
+            end)
+        end
         
         -- Invalidate cache so next placement reads fresh count
         AutoPlace.InvalidateCache()
