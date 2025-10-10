@@ -114,72 +114,90 @@ function Information.CreateSeedDetails(infoTab)
     -- Get all seeds from AutoBuy (loaded from GitHub)
     local seedList = Information.AutoBuy.GetAllSeeds()
     
+    -- Store seed info labels for updates
+    Information.Brain.UI.SeedInfoLabels = {}
+    
     for _, seedName in ipairs(seedList) do
+        -- Get seed info with UI-based stock reading (directly read price & stock)
         local seedInstance = Information.References.Seeds:FindFirstChild(seedName)
+        if not seedInstance then continue end
         
-        if seedInstance then
-            -- Get seed info with UI-based stock reading
-            local seedInfo = Information.AutoBuy.GetSeedInfo(seedInstance)
-            
-            -- Create first row for seed info
-            local row1 = form:Row()
-            
-            row1:Left():TitleStack({
-                Title = seedName,
-                Subtitle = "Plant: " .. seedInfo.Plant,
-            })
-            
-            local infoLabel = row1:Right():Label({
-                Text = "$" .. FormatNumber(seedInfo.Price) .. " | Stock: " .. FormatNumber(seedInfo.Stock)
-            })
-            
-            -- Create second row for buy button
-            local row2 = form:Row()
-            
-            row2:Left():Label({
-                Text = "" -- Empty left side
-            })
-            
-            row2:Right():Button({
-                Label = "Buy " .. seedName,
-                State = "Primary",
-                Pushed = function(self)
-                    local currentMoney = Information.AutoBuy.GetMoney()
-                    local currentSeedInfo = Information.AutoBuy.GetSeedInfo(seedInstance)
+        local seedInfo = Information.AutoBuy.GetSeedInfo(seedInstance)
+        local seedPrice = seedInfo.Price
+        local seedStock = seedInfo.Stock
+        
+        -- Create first row for seed info
+        local row1 = form:Row()
+        
+        row1:Left():TitleStack({
+            Title = seedName,
+            Subtitle = "Plant: " .. seedInfo.Plant,
+        })
+        
+        local infoLabel = row1:Right():Label({
+            Text = "$" .. FormatNumber(seedPrice) .. " | Stock: " .. FormatNumber(seedStock)
+        })
+        
+        -- Create second row for buy button
+        local row2 = form:Row()
+        
+        row2:Left():Label({
+            Text = "" -- Empty left side
+        })
+        
+        row2:Right():Button({
+            Label = "Buy " .. seedName,
+            State = "Primary",
+            Pushed = function(self)
+                local currentMoney = Information.AutoBuy.GetMoney()
+                local currentSeedInfo = Information.AutoBuy.GetSeedInfo(seedInstance)
+                local currentStock = currentSeedInfo.Stock
+                local currentPrice = currentSeedInfo.Price
+                
+                if currentMoney >= currentPrice and currentStock > 0 then
+                    print("💰 [Brain] Buying " .. seedName .. "...")
+                    local success = Information.AutoBuy.PurchaseSeed(seedName)
                     
-                    if currentMoney >= currentSeedInfo.Price and currentSeedInfo.Stock > 0 then
-                        print("💰 [Brain] Buying " .. seedName .. "...")
-                        local success = Information.AutoBuy.PurchaseSeed(seedName)
+                    if success then
+                        print("✅ Purchased: " .. seedName)
                         
-                        if success then
-                            print("✅ Purchased: " .. seedName)
-                            
-                            -- Immediately update the display
-                            task.wait(0.2)  -- Wait for server response
-                            local updatedInfo = Information.AutoBuy.GetSeedInfo(seedInstance)
-                            infoLabel.Text = "$" .. FormatNumber(updatedInfo.Price) .. " | Stock: " .. FormatNumber(updatedInfo.Stock)
-                            
-                            Information.Brain.UpdateMoney()
-                        else
-                            print("❌ Failed to buy " .. seedName)
-                        end
-                    elseif currentSeedInfo.Stock <= 0 then
-                        print("⚠️ " .. seedName .. " is out of stock!")
+                        -- Immediately update the display
+                        task.wait(0.2)  -- Wait for server response
+                        local updatedInfo = Information.AutoBuy.GetSeedInfo(seedInstance)
+                        local updatedPrice = updatedInfo.Price
+                        local updatedStock = updatedInfo.Stock
+                        infoLabel.Text = "$" .. FormatNumber(updatedPrice) .. " | Stock: " .. FormatNumber(updatedStock)
+                        
+                        Information.Brain.UpdateMoney()
                     else
-                        print("⚠️ Not enough money for " .. seedName .. "! Need: $" .. FormatNumber(currentSeedInfo.Price))
+                        print("❌ Failed to buy " .. seedName)
                     end
-                end,
-            })
-            
-            -- Brain: Store label reference for real-time updates
-            Information.Brain.UI.SeedInfoLabels[seedName] = infoLabel
-        end
+                elseif currentStock <= 0 then
+                    print("⚠️ " .. seedName .. " is out of stock!")
+                else
+                    print("⚠️ Not enough money for " .. seedName .. "! Need: $" .. FormatNumber(currentPrice))
+                end
+            end,
+        })
+        
+        -- Brain: Store label reference for real-time updates
+        Information.Brain.UI.SeedInfoLabels[seedName] = infoLabel
     end
     
     -- Brain: Update seed info every 0.3 seconds (faster for better UX)
     task.spawn(function()
         while task.wait(0.3) do
-            Information.Brain.UpdateSeedInfo()
+            -- Update seed info
+            for seedName, label in pairs(Information.Brain.UI.SeedInfoLabels) do
+                local seedInstance = Information.References.Seeds:FindFirstChild(seedName)
+                
+                if seedInstance and label then
+                    local seedInfo = Information.AutoBuy.GetSeedInfo(seedInstance)
+                    local seedPrice = seedInfo.Price
+                    local seedStock = seedInfo.Stock
+                    label.Text = "$" .. FormatNumber(seedPrice) .. " | Stock: " .. FormatNumber(seedStock)
+                end
+            end
         end
     end)
 end
