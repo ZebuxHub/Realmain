@@ -47,7 +47,7 @@ AutoAttack.Brain = nil
 AutoAttack.Settings = {
     AutoAttackEnabled = false,
     MovementMode = "Walk",  -- "TP", "Tween", "Walk"
-    AttackMode = "Random",  -- "Random", "HighHP", "LowHP"
+    AttackMode = "Random",  -- "Random", "HighHP", "LowHP", "HighMaxHP", "LowMaxHP"
     AttackRange = 20,  -- Distance to start attacking
     TweenSpeed = 50  -- Speed for tween movement
 }
@@ -98,16 +98,22 @@ end
 function AutoAttack.EquipBat()
     if AutoAttack.BatEquipped then return true end
     
+    print("[AutoAttack] 🔧 Attempting to equip Leather Grip Bat...")
+    
     local success = pcall(function()
         local player = AutoAttack.References.LocalPlayer
         local backpack = player:WaitForChild("Backpack")
         local character = player.Character
         
-        if not character then return end
+        if not character then
+            print("[AutoAttack] ❌ No character found")
+            return
+        end
         
         -- Check if already equipped
         local equippedTool = character:FindFirstChildOfClass("Tool")
         if equippedTool and equippedTool.Name == "Leather Grip Bat" then
+            print("[AutoAttack] ✅ Bat already equipped")
             AutoAttack.BatEquipped = true
             return
         end
@@ -115,6 +121,7 @@ function AutoAttack.EquipBat()
         -- Find bat in backpack
         local bat = backpack:FindFirstChild("Leather Grip Bat")
         if bat then
+            print("[AutoAttack] 🎯 Found bat in backpack, equipping...")
             -- Unequip current tool
             if equippedTool then
                 equippedTool.Parent = backpack
@@ -123,6 +130,16 @@ function AutoAttack.EquipBat()
             -- Equip bat
             bat.Parent = character
             AutoAttack.BatEquipped = true
+            print("[AutoAttack] ✅ Bat equipped successfully!")
+        else
+            print("[AutoAttack] ❌ Leather Grip Bat not found in backpack")
+            -- List all tools in backpack
+            print("[AutoAttack] 📦 Tools in backpack:")
+            for _, tool in ipairs(backpack:GetChildren()) do
+                if tool:IsA("Tool") then
+                    print("  -", tool.Name)
+                end
+            end
         end
     end)
     
@@ -147,48 +164,54 @@ function AutoAttack.UpdateTargetCache()
     AutoAttack.CachedTargets = {}
     AutoAttack.LastCacheUpdate = now
     
+    print("[AutoAttack] 🔍 Scanning for targets...")
+    
     -- Scan workspace for NPCs/Players
     pcall(function()
         local myUserID = AutoAttack.GetUserID()
+        print("[AutoAttack] My User ID:", myUserID)
         
-        -- Common locations for NPCs/enemies
-        local locations = {
-            workspace:FindFirstChild("NPCs"),
-            workspace:FindFirstChild("Enemies"),
-            workspace:FindFirstChild("Mobs"),
-            workspace
-        }
-        
-        for _, location in ipairs(locations) do
-            if location then
-                for _, model in ipairs(location:GetDescendants()) do
-                    if model:IsA("Model") then
-                        -- Check if this model is attackable
-                        local humanoid = model:FindFirstChildOfClass("Humanoid")
-                        local primaryPart = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart")
+        -- Scan ALL workspace for models with Humanoids
+        for _, model in ipairs(workspace:GetDescendants()) do
+            if model:IsA("Model") and model.Name ~= "Workspace" then
+                -- Check if this model is attackable
+                local humanoid = model:FindFirstChildOfClass("Humanoid")
+                local primaryPart = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso")
+                
+                if humanoid and primaryPart then
+                    -- Read health from attributes (preferred) or Humanoid
+                    local health = model:GetAttribute("Health") or humanoid.Health
+                    local maxHealth = model:GetAttribute("MaxHealth") or humanoid.MaxHealth
+                    
+                    if health > 0 then
+                        -- OPTIMIZED: O(1) attribute check
+                        local associatedPlayer = model:GetAttribute("AssociatedPlayer")
+                        local modelID = model:GetAttribute("ID")
                         
-                        if humanoid and humanoid.Health > 0 and primaryPart then
-                            -- OPTIMIZED: O(1) attribute check
-                            local associatedPlayer = model:GetAttribute("AssociatedPlayer")
-                            
-                            -- Only target models NOT owned by us
-                            if not associatedPlayer or associatedPlayer ~= myUserID then
-                                table.insert(AutoAttack.CachedTargets, {
-                                    Model = model,
-                                    Humanoid = humanoid,
-                                    PrimaryPart = primaryPart,
-                                    HP = humanoid.Health,
-                                    MaxHP = humanoid.MaxHealth,
-                                    AssociatedPlayer = associatedPlayer,
-                                    ID = model:GetAttribute("ID") or model.Name
-                                })
-                            end
+                        print("[AutoAttack] 👤 Found model:", model.Name, "| HP:", health, "/", maxHealth, "| AssociatedPlayer:", associatedPlayer, "| ID:", modelID)
+                        
+                        -- Only target models NOT owned by us
+                        if not associatedPlayer or associatedPlayer ~= myUserID then
+                            table.insert(AutoAttack.CachedTargets, {
+                                Model = model,
+                                Humanoid = humanoid,
+                                PrimaryPart = primaryPart,
+                                HP = health,
+                                MaxHP = maxHealth,
+                                AssociatedPlayer = associatedPlayer,
+                                ID = modelID or model.Name
+                            })
+                            print("[AutoAttack] ✅ Added as valid target:", model.Name)
+                        else
+                            print("[AutoAttack] ❌ Skipped (owned by us):", model.Name)
                         end
                     end
                 end
             end
         end
     end)
+    
+    print("[AutoAttack] 📊 Found", #AutoAttack.CachedTargets, "valid targets")
 end
 
 -- Select best target based on attack mode
@@ -214,7 +237,7 @@ function AutoAttack.SelectTarget()
         bestTarget = AutoAttack.CachedTargets[math.random(1, #AutoAttack.CachedTargets)]
         
     elseif mode == "HighHP" then
-        -- Find highest HP target
+        -- Find highest CURRENT HP target
         local highestHP = 0
         for _, target in ipairs(AutoAttack.CachedTargets) do
             if target.HP > highestHP then
@@ -224,11 +247,31 @@ function AutoAttack.SelectTarget()
         end
         
     elseif mode == "LowHP" then
-        -- Find lowest HP target
+        -- Find lowest CURRENT HP target
         local lowestHP = math.huge
         for _, target in ipairs(AutoAttack.CachedTargets) do
             if target.HP < lowestHP and target.HP > 0 then
                 lowestHP = target.HP
+                bestTarget = target
+            end
+        end
+        
+    elseif mode == "HighMaxHP" then
+        -- Find highest MAX HP target (tankiest enemies)
+        local highestMaxHP = 0
+        for _, target in ipairs(AutoAttack.CachedTargets) do
+            if target.MaxHP > highestMaxHP then
+                highestMaxHP = target.MaxHP
+                bestTarget = target
+            end
+        end
+        
+    elseif mode == "LowMaxHP" then
+        -- Find lowest MAX HP target (weakest enemies)
+        local lowestMaxHP = math.huge
+        for _, target in ipairs(AutoAttack.CachedTargets) do
+            if target.MaxHP < lowestMaxHP then
+                lowestMaxHP = target.MaxHP
                 bestTarget = target
             end
         end
@@ -354,7 +397,12 @@ end
 
 -- Fire attack remote
 function AutoAttack.Attack(targetID)
-    if not targetID then return false end
+    if not targetID then
+        print("[AutoAttack] ❌ No target ID provided")
+        return false
+    end
+    
+    print("[AutoAttack] 🔥 Firing attack for ID:", targetID)
     
     local success = pcall(function()
         local args = {
@@ -371,6 +419,9 @@ function AutoAttack.Attack(targetID)
     
     if success then
         AutoAttack.TotalAttacks = AutoAttack.TotalAttacks + 1
+        print("[AutoAttack] ✅ Attack fired! Total attacks:", AutoAttack.TotalAttacks)
+    else
+        print("[AutoAttack] ❌ Attack failed!")
     end
     
     return success
@@ -378,6 +429,8 @@ end
 
 -- Main combat loop
 function AutoAttack.CombatLoop()
+    print("[AutoAttack] 🎯 Combat loop started!")
+    
     while AutoAttack.IsRunning and AutoAttack.Settings.AutoAttackEnabled do
         task.wait(0.1)  -- Attack interval
         
@@ -392,30 +445,39 @@ function AutoAttack.CombatLoop()
         local target = AutoAttack.SelectTarget()
         
         if not target then
+            print("[AutoAttack] ⚠️ No valid targets found, waiting...")
             task.wait(1)
             continue
         end
         
+        print("[AutoAttack] 🎯 Target selected:", target.Model.Name, "| HP:", target.HP, "/", target.MaxHP)
         AutoAttack.CurrentTarget = target
         
         -- Check distance
         local distance = AutoAttack.GetDistanceToTarget(target)
+        print("[AutoAttack] 📏 Distance to target:", math.floor(distance), "studs")
         
         if distance > AutoAttack.Settings.AttackRange then
             -- Move closer
+            print("[AutoAttack] 🚶 Moving to target using", AutoAttack.Settings.MovementMode, "mode...")
             AutoAttack.MoveToTarget(target)
             task.wait(0.5)
         else
             -- In range, attack!
+            print("[AutoAttack] ⚔️ Attacking target:", target.ID)
             AutoAttack.Attack(target.ID)
         end
         
-        -- Check if target is still alive
-        if target.Humanoid.Health <= 0 then
+        -- Check if target is still alive (read from attributes or Humanoid)
+        local currentHP = target.Model:GetAttribute("Health") or target.Humanoid.Health
+        if currentHP <= 0 then
+            print("[AutoAttack] 💀 Target defeated!")
             AutoAttack.CurrentTarget = nil
             task.wait(0.2)
         end
     end
+    
+    print("[AutoAttack] 🛑 Combat loop ended")
 end
 
 --[[
@@ -426,8 +488,14 @@ end
 
 function AutoAttack.Start()
     if AutoAttack.IsRunning then
+        print("[AutoAttack] ⚠️ Already running!")
         return
     end
+    
+    print("[AutoAttack] 🚀 Starting Auto Attack...")
+    print("[AutoAttack] ⚙️ Movement Mode:", AutoAttack.Settings.MovementMode)
+    print("[AutoAttack] 🎯 Attack Mode:", AutoAttack.Settings.AttackMode)
+    print("[AutoAttack] 📏 Attack Range:", AutoAttack.Settings.AttackRange)
     
     AutoAttack.IsRunning = true
     AutoAttack.TotalAttacks = 0
@@ -439,6 +507,8 @@ function AutoAttack.Start()
     AutoAttack.AttackLoop = task.spawn(function()
         AutoAttack.CombatLoop()
     end)
+    
+    print("[AutoAttack] ✅ Auto Attack started!")
 end
 
 function AutoAttack.Stop()
