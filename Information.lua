@@ -126,27 +126,21 @@ function Information.CreateSeedDetails(infoTab)
         local seedPrice = seedInfo.Price
         local seedStock = seedInfo.Stock
         
-        -- Create first row for seed info
-        local row1 = form:Row()
+        -- Create row for seed info
+        local row = form:Row()
         
-        row1:Left():TitleStack({
+        row:Left():TitleStack({
             Title = seedName,
             Subtitle = "Plant: " .. seedInfo.Plant,
         })
         
-        local infoLabel = row1:Right():Label({
+        local infoLabel = row:Right():Label({
             Text = "$" .. FormatNumber(seedPrice) .. " | Stock: " .. FormatNumber(seedStock)
         })
         
-        -- Create second row for buy button
-        local row2 = form:Row()
-        
-        row2:Left():Label({
-            Text = "" -- Empty left side
-        })
-        
-        row2:Right():Button({
-            Label = "Buy " .. seedName,
+        -- Add small buy button on the same row
+        row:Right():Button({
+            Label = "Buy",
             State = "Primary",
             Pushed = function(self)
                 local currentMoney = Information.AutoBuy.GetMoney()
@@ -220,27 +214,21 @@ function Information.CreateGearDetails(infoTab)
         local gearPrice = Information.AutoBuy.GetGearPrice(gearName)
         local gearStock = Information.AutoBuy.GetGearStock(gearName)
         
-        -- Create first row for gear info
-        local row1 = form:Row()
+        -- Create row for gear info
+        local row = form:Row()
         
-        row1:Left():TitleStack({
+        row:Left():TitleStack({
             Title = gearName,
             Subtitle = "Gear",
         })
         
-        local infoLabel = row1:Right():Label({
+        local infoLabel = row:Right():Label({
             Text = "$" .. FormatNumber(gearPrice) .. " | Stock: " .. FormatNumber(gearStock)
         })
         
-        -- Create second row for buy button
-        local row2 = form:Row()
-        
-        row2:Left():Label({
-            Text = "" -- Empty left side
-        })
-        
-        row2:Right():Button({
-            Label = "Buy " .. gearName,
+        -- Add small buy button on the same row
+        row:Right():Button({
+            Label = "Buy",
             State = "Primary",
             Pushed = function(self)
                 local currentMoney = Information.AutoBuy.GetMoney()
