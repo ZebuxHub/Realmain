@@ -188,6 +188,20 @@ function Platform.UnlockPlatform(platformNum)
     end
 end
 
+-- Count how many platforms are already unlocked
+function Platform.CountUnlockedPlatforms()
+    local platforms = Platform.GetAllPlatforms()
+    local count = 0
+    
+    for _, platform in ipairs(platforms) do
+        if platform.Enabled then
+            count = count + 1
+        end
+    end
+    
+    return count
+end
+
 -- Try to unlock next available platform
 function Platform.TryUnlockNext()
     if not Platform.Settings.AutoUnlockEnabled then return end
@@ -195,12 +209,20 @@ function Platform.TryUnlockNext()
     local currentMoney = Platform.GetMoney()
     local currentRebirth = Platform.GetRebirth()
     local platforms = Platform.GetAllPlatforms()
+    local unlockedCount = Platform.CountUnlockedPlatforms()
     
     -- Find first locked platform that meets requirements
     for _, platform in ipairs(platforms) do
         local isUnlocked = platform.Enabled
+        local platformNum = tonumber(platform.Number)
         
         if not isUnlocked then
+            -- Check sequential unlock requirement (can only unlock N+1)
+            if platformNum > unlockedCount + 1 then
+                print("[Platform] Platform " .. platform.Number .. " locked - must unlock previous platforms first (Unlocked: " .. unlockedCount .. ")")
+                break  -- Stop here, must unlock in order
+            end
+            
             -- Check rebirth requirement
             if currentRebirth < platform.RebirthRequired then
                 print("[Platform] Platform " .. platform.Number .. " requires Rebirth " .. platform.RebirthRequired .. " (Current: " .. currentRebirth .. ")")
