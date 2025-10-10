@@ -240,7 +240,8 @@ function Platform.TryUnlockNext()
             -- Check rebirth requirement
             if currentRebirth < platform.RebirthRequired then
                 print("[Platform] Platform " .. platform.Number .. " requires Rebirth " .. platform.RebirthRequired .. " (Current: " .. currentRebirth .. ")")
-                break  -- Stop here, can't unlock further platforms
+                print("⏸️ [Platform] Waiting for rebirth to increase...")
+                return  -- Stop and wait for rebirth change event
             end
             
             -- Check money requirement
