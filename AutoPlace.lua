@@ -1,16 +1,16 @@
 --[[
     ========================================
-    🌱 AutoPlace Module - Plant Vs Brainrot
+    🌱 AutoPlaceSeed Module - Plant Vs Brainrot
     ========================================
     
-    Purpose: Automatically place plants from backpack to available plots
-    Architecture: Event-driven + polling hybrid for efficiency
+    Purpose: Automatically place seeds to available plot spots
+    Architecture: Event-driven with row limit tracking
     
     Author: AI Assistant
     Version: 1.0.0
 ]]
 
-local AutoPlace = {
+local AutoPlaceSeed = {
     Version = "1.0.0",
     
     -- State
@@ -22,27 +22,18 @@ local AutoPlace = {
     CachedSpots = {},
     SpotsCacheValid = false,
     
-    -- Row Tracking (5 plant/seed limit per row)
-    RowPlantCounts = {},  -- {["1"] = 3, ["2"] = 5, ...}
-    MaxPlantsPerRow = 5,
+    -- Row Tracking (5 seeds per row max)
+    RowSeedCounts = {},
+    MaxSeedsPerRow = 5,
     
     -- Used CFrames (prevent placing in same spot twice)
     UsedCFrames = {},
     
-    -- Plant Data Cache (avoid repeated ReplicatedStorage reads)
-    PlantDataCache = nil,
-    PlantNamesList = {},
-    
-    -- OPTIMIZED: Selected plants as a set for O(1) lookup
-    SelectedPlantsSet = {},
-    
-    -- Auto Pick Up State
-    TotalPickUps = 0,
-    PlantMonitorConnections = {},
+    -- Optimized: Selected seeds as a set for O(1) lookup
+    SelectedSeedsSet = {},
     
     -- Event Connections
     BackpackConnection = nil,
-    ChildAddedConnections = {},
     PlotAttributeConnections = {},
     
     -- Task Management (spam toggle prevention with zero-cost generation)
@@ -61,29 +52,29 @@ local AutoPlace = {
     ========================================
 --]]
 
--- Rebuild selected plants set for O(1) lookup
-function AutoPlace.RebuildPlantsSet()
-    AutoPlace.SelectedPlantsSet = {}
+-- Rebuild selected seeds set for O(1) lookup
+function AutoPlaceSeed.RebuildSeedsSet()
+    AutoPlaceSeed.SelectedSeedsSet = {}
     
-    if not AutoPlace.Settings then
+    if not AutoPlaceSeed.Settings then
         return
     end
     
-    local selectedPlants = AutoPlace.Settings.SelectedPlants
-    if selectedPlants and type(selectedPlants) == "table" then
-        for _, plantName in ipairs(selectedPlants) do
-            if plantName and type(plantName) == "string" then
-                AutoPlace.SelectedPlantsSet[plantName] = true
+    local selectedSeeds = AutoPlaceSeed.Settings.SelectedSeedsToPlace
+    if selectedSeeds and type(selectedSeeds) == "table" then
+        for _, seedName in ipairs(selectedSeeds) do
+            if seedName and type(seedName) == "string" then
+                AutoPlaceSeed.SelectedSeedsSet[seedName] = true
             end
         end
     end
 end
 
-function AutoPlace.Init(services, references, settings, brain)
-    AutoPlace.Services = services
-    AutoPlace.References = references
-    AutoPlace.Settings = settings
-    AutoPlace.Brain = brain
+function AutoPlaceSeed.Init(services, references, settings, brain)
+    AutoPlaceSeed.Services = services
+    AutoPlaceSeed.References = references
+    AutoPlaceSeed.Settings = settings
+    AutoPlaceSeed.Brain = brain
     
     return true
 end
@@ -94,193 +85,32 @@ end
     ========================================
 --]]
 
--- Format numbers with suffixes (1K, 1M, 1B, etc.)
+-- Format numbers with K/M/B suffix
 local function FormatNumber(num)
-    if num >= 1000000000000 then
-        return string.format("%.2fT", num / 1000000000000)
-    elseif num >= 1000000000 then
-        return string.format("%.2fB", num / 1000000000)
+    if num >= 1000000000 then
+        return string.format("%.1fB", num / 1000000000)
     elseif num >= 1000000 then
-        return string.format("%.2fM", num / 1000000)
+        return string.format("%.1fM", num / 1000000)
     elseif num >= 1000 then
-        return string.format("%.2fK", num / 1000)
+        return string.format("%.1fK", num / 1000)
     else
         return tostring(math.floor(num))
     end
 end
 
 -- Get player's owned plot number
-function AutoPlace.GetOwnedPlot()
-    local success, plotNum = pcall(function()
-        return AutoPlace.References.LocalPlayer:GetAttribute("Plot")
-    end)
-    
-    if success and plotNum then
+function AutoPlaceSeed.GetOwnedPlot()
+    local plotNum = AutoPlaceSeed.References.LocalPlayer:GetAttribute("Plot")
+    if plotNum then
         return tostring(plotNum)
     end
-    
     return nil
-end
-
--- Get all plant names from ReplicatedStorage (cached)
-function AutoPlace.GetAllPlants()
-    if AutoPlace.PlantDataCache then
-        return AutoPlace.PlantDataCache
-    end
-    
-    local plants = {}
-    
-    pcall(function()
-        for _, plant in ipairs(AutoPlace.References.Plants:GetChildren()) do
-            table.insert(plants, {
-                Name = plant.Name,
-                Damage = plant:GetAttribute("Damage") or 0
-            })
-        end
-    end)
-    
-    table.sort(plants, function(a, b)
-        return a.Damage > b.Damage
-    end)
-    
-    AutoPlace.PlantDataCache = plants
-    
-    -- Build name list for faster lookup
-    for _, plant in ipairs(plants) do
-        table.insert(AutoPlace.PlantNamesList, plant.Name:lower())
-    end
-    
-    return plants
-end
-
--- Extract plant name from backpack item name (format: "[XX.X kg] PlantName")
-local function ExtractPlantName(itemName)
-    -- Pattern: "[XX.X kg] Name" -> extract "Name"
-    local plantName = itemName:match("%]%s*(.+)$")
-    if plantName then
-        return plantName:match("^%s*(.-)%s*$") -- Trim whitespace
-    end
-    return itemName -- Fallback to full name
-end
-
--- Calculate string similarity (0-1, higher = more similar)
-local function StringSimilarity(str1, str2)
-    str1 = str1:lower()
-    str2 = str2:lower()
-    
-    -- Exact match
-    if str1 == str2 then
-        return 1.0
-    end
-    
-    -- Length check: If difference > 50%, can't be 80% similar
-    local len1, len2 = #str1, #str2
-    if math.abs(len1 - len2) > math.max(len1, len2) * 0.5 then
-        return 0.0
-    end
-    
-    -- Contains check
-    if str1:find(str2, 1, true) or str2:find(str1, 1, true) then
-        return 0.9
-    end
-    
-    -- Character comparison with early exit
-    local matches = 0
-    local minLen = math.min(len1, len2)
-    local maxLen = math.max(len1, len2)
-    
-    for i = 1, minLen do
-        if str1:sub(i, i) == str2:sub(i, i) then
-            matches = matches + 1
-        else
-            -- Early exit: Can't reach 80% threshold
-            local remaining = minLen - i
-            if (matches + remaining) / maxLen < 0.8 then
-                return 0.0
-            end
-        end
-    end
-    
-    return matches / maxLen
-end
-
--- Check if plant name matches any known plant (80% similarity, cached)
-function AutoPlace.IsValidPlantName(itemName)
-    -- CRITICAL: Reject seeds (they end with " Seed")
-    local cleanName = ExtractPlantName(itemName)
-    if #cleanName >= 5 and string.sub(cleanName, -5) == " Seed" then
-        return false  -- This is a seed, not a plant!
-    end
-    
-    -- Ensure cache is built
-    if #AutoPlace.PlantNamesList == 0 then
-        AutoPlace.GetAllPlants()
-    end
-    
-    -- Quick lookup against cached names
-    for _, plantName in ipairs(AutoPlace.PlantNamesList) do
-        if StringSimilarity(cleanName, plantName) >= 0.8 then
-            return true
-        end
-    end
-    
-    return false
-end
-
--- Get plant info from backpack Tool
-function AutoPlace.GetPlantInfo(plantTool)
-    local success, info = pcall(function()
-        local itemName = plantTool.Name
-        local extractedName = ExtractPlantName(itemName)
-        
-        return {
-            Name = extractedName,
-            OriginalName = itemName,
-            ID = plantTool:GetAttribute("ID"),
-            Damage = plantTool:GetAttribute("Damage") or 0
-        }
-    end)
-    
-    if success and info.ID then
-        return info
-    end
-    
-    return nil
-end
-
--- Check if plant matches user's filter
-function AutoPlace.ShouldPlacePlant(plantInfo)
-    if not AutoPlace.Settings.AutoPlaceEnabled then
-        return false
-    end
-    
-    local damageFilter = AutoPlace.Settings.PlantDamageFilter or 0
-    
-    -- Check filters
-    local hasPlantFilter = next(AutoPlace.SelectedPlantsSet) ~= nil
-    local hasDamageFilter = damageFilter > 0
-    
-    if hasPlantFilter and hasDamageFilter then
-        -- Both filters: Plant name must match AND damage >= filter
-        local isSelected = AutoPlace.SelectedPlantsSet[plantInfo.Name] == true
-        local meetsMinDamage = plantInfo.Damage >= damageFilter
-        return isSelected and meetsMinDamage
-    elseif hasPlantFilter then
-        -- Only name filter: O(1) set lookup
-        return AutoPlace.SelectedPlantsSet[plantInfo.Name] == true
-    elseif hasDamageFilter then
-        -- Only damage filter: Plant damage >= filter
-        return plantInfo.Damage >= damageFilter
-    else
-        -- No filter: Place all plants
-        return true
-    end
 end
 
 -- Count ALL items (plants + seeds) in a specific row by reading the Row's Plants attribute
-function AutoPlace.CountPlantsInRow(rowName, grass)
+function AutoPlaceSeed.CountSeedsInRow(rowName, grass)
     -- The game already counts plants + seeds in the "Plants" attribute on the Row!
-    local plotNum = AutoPlace.GetOwnedPlot()
+    local plotNum = AutoPlaceSeed.GetOwnedPlot()
     if not plotNum then return 0 end
     
     local count = 0
@@ -299,49 +129,49 @@ function AutoPlace.CountPlantsInRow(rowName, grass)
     end)
     
     if not success then
-        warn("[AutoPlace] Failed to read Plants attribute for row " .. rowName)
+        warn("[AutoPlaceSeed] Failed to read Plants attribute for row " .. rowName)
     end
     
-    print("[AutoPlace COUNT] Row " .. rowName .. " has " .. count .. " items (from Plants attribute)")
+    print("[AutoPlaceSeed COUNT] Row " .. rowName .. " has " .. count .. " items (from Plants attribute)")
     
     return count
 end
 
--- Check if row has space for more plants (< 5)
-function AutoPlace.CanPlaceInRow(rowName, grass)
-    local count = AutoPlace.CountPlantsInRow(rowName, grass)
-    return count < AutoPlace.MaxPlantsPerRow
+-- Check if row has space for more seeds (< 5)
+function AutoPlaceSeed.CanPlaceInRow(rowName, grass)
+    local count = AutoPlaceSeed.CountSeedsInRow(rowName, grass)
+    return count < AutoPlaceSeed.MaxSeedsPerRow
 end
 
--- Invalidate spots cache (call when CanPlace changes)
-function AutoPlace.InvalidateCache()
-    AutoPlace.SpotsCacheValid = false
-    AutoPlace.RowPlantCounts = {}
+-- Invalidate spots cache
+function AutoPlaceSeed.InvalidateCache()
+    AutoPlaceSeed.SpotsCacheValid = false
+    AutoPlaceSeed.RowSeedCounts = {}
     -- DON'T clear UsedCFrames here - items are still physically placed!
 end
 
--- Find all available spots in player's plot (with caching)
-function AutoPlace.FindAvailableSpots(forceRescan)
-    -- Return cached spots if valid and not forcing rescan
-    if AutoPlace.SpotsCacheValid and not forceRescan then
-        return AutoPlace.CachedSpots
+-- Find all available spots in player's plot (with caching and row limits)
+function AutoPlaceSeed.FindAvailableSpots(forceRescan)
+    -- Return cached spots if valid
+    if AutoPlaceSeed.SpotsCacheValid and not forceRescan then
+        return AutoPlaceSeed.CachedSpots
     end
     
     local spots = {}
-    local plotNum = AutoPlace.GetOwnedPlot()
+    local plotNum = AutoPlaceSeed.GetOwnedPlot()
     
     if not plotNum then
         return spots
     end
     
-    local success = pcall(function()
+    pcall(function()
         local plot = workspace.Plots:FindFirstChild(plotNum)
         if not plot then return end
         
         local rows = plot:FindFirstChild("Rows")
         if not rows then return end
         
-        -- Loop through all rows (sorted by name)
+        -- Sort rows by name
         local rowsList = rows:GetChildren()
         table.sort(rowsList, function(a, b)
             return tonumber(a.Name) < tonumber(b.Name)
@@ -352,7 +182,7 @@ function AutoPlace.FindAvailableSpots(forceRescan)
             local plantsInRow = row:GetAttribute("Plants") or 0
             
             -- Skip full rows immediately
-            if plantsInRow < AutoPlace.MaxPlantsPerRow then
+            if plantsInRow < AutoPlaceSeed.MaxSeedsPerRow then
                 local grass = row:FindFirstChild("Grass")
                 if grass then
                     for _, spot in ipairs(grass:GetChildren()) do
@@ -369,45 +199,87 @@ function AutoPlace.FindAvailableSpots(forceRescan)
                     end
                     
                     -- Update row count cache from attribute
-                    AutoPlace.RowPlantCounts[row.Name] = plantsInRow
+                    AutoPlaceSeed.RowSeedCounts[row.Name] = plantsInRow
                 end
             end
         end
     end)
     
     -- Cache the results
-    AutoPlace.CachedSpots = spots
-    AutoPlace.SpotsCacheValid = true
+    AutoPlaceSeed.CachedSpots = spots
+    AutoPlaceSeed.SpotsCacheValid = true
     
     return spots
 end
 
--- Move plant tool from backpack to character in workspace
-function AutoPlace.MovePlantToCharacter(plantTool)
-    local success = pcall(function()
-        local character = AutoPlace.References.LocalPlayer.Character
-        local backpack = AutoPlace.References.Backpack
-        
-        if not character or not plantTool:IsA("Tool") then
-            return
-        end
-        
-        -- Unequip any currently equipped tools
-        for _, tool in ipairs(character:GetChildren()) do
-            if tool:IsA("Tool") then
-                tool.Parent = backpack
-            end
-        end
-        
-        -- Equip the plant tool
-        plantTool.Parent = character
-    end)
-    
-    return success
+-- Extract clean seed name (remove quantity prefix like "[x4]")
+-- "[x4] Cactus Seed" -> "Cactus Seed"
+-- "[12 kg] Cactus Seed" -> "Cactus Seed"
+local function ExtractCleanName(displayName)
+    -- Remove quantity prefix: [x4], [1.2 kg], [Gold], etc.
+    local cleanName = displayName:match("%]%s*(.+)$")
+    if cleanName then
+        return cleanName
+    end
+    return displayName  -- No prefix, return as-is
 end
 
--- Place plant at specific spot (centered)
-function AutoPlace.PlacePlant(plantInfo, spot)
+-- Check if should place this seed (can pass seed name or Tool)
+function AutoPlaceSeed.ShouldPlaceSeed(seedInput)
+    local displayName
+    
+    -- Get display name
+    if type(seedInput) == "userdata" and seedInput:IsA("Tool") then
+        displayName = seedInput.Name
+    else
+        displayName = seedInput
+    end
+    
+    -- Extract clean name (remove [x4] prefix, etc.)
+    local cleanName = ExtractCleanName(displayName)
+    
+    -- If no seeds selected, place all seeds
+    if not next(AutoPlaceSeed.SelectedSeedsSet) then
+        return true
+    end
+    
+    -- OPTIMIZED: O(1) set lookup using clean seed name
+    -- Match against exact seed name (e.g., "Cactus Seed")
+    return AutoPlaceSeed.SelectedSeedsSet[cleanName] == true
+end
+
+-- Get seed info from backpack Tool
+function AutoPlaceSeed.GetSeedInfo(seedTool)
+    local success, info = pcall(function()
+        local displayName = seedTool.Name
+        local id = seedTool:GetAttribute("ID")
+        
+        if not id then
+            return nil
+        end
+        
+        local itemName = seedTool:GetAttribute("ItemName")
+        local seedName = seedTool:GetAttribute("Seed")
+        local plantName = seedTool:GetAttribute("Plant")
+        
+        local finalName = itemName or seedName or ExtractCleanName(displayName)
+        
+        return {
+            Name = finalName,
+            Plant = plantName,
+            DisplayName = displayName,
+            ID = id
+        }
+    end)
+    
+    if success and info then
+        return info
+    end
+    return nil
+end
+
+-- Place seed at specific spot (centered)
+function AutoPlaceSeed.PlaceSeed(seedInfo, spot)
     local success = pcall(function()
         local position = spot.Floor.CFrame.Position
         local x, y, z = position.X, position.Y, position.Z
@@ -424,70 +296,63 @@ function AutoPlace.PlacePlant(plantInfo, spot)
         
         local placementCFrame = CFrame.new(x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22)
         
-        AutoPlace.References.PlaceItemRemote:FireServer({
-            ["ID"] = plantInfo.ID,
+        AutoPlaceSeed.References.PlaceItemRemote:FireServer({
+            ["ID"] = seedInfo.ID,
             ["CFrame"] = placementCFrame,
-            ["Item"] = plantInfo.Name,
+            ["Item"] = seedInfo.Name,
             ["Floor"] = spot.Floor
         })
     end)
     
     if success then
-        AutoPlace.TotalPlacements = AutoPlace.TotalPlacements + 1
+        AutoPlaceSeed.TotalPlacements = AutoPlaceSeed.TotalPlacements + 1
         
-        -- Update row plant count
-        if AutoPlace.RowPlantCounts[spot.RowName] then
-            AutoPlace.RowPlantCounts[spot.RowName] = AutoPlace.RowPlantCounts[spot.RowName] + 1
+        -- Update row seed count
+        if AutoPlaceSeed.RowSeedCounts[spot.RowName] then
+            AutoPlaceSeed.RowSeedCounts[spot.RowName] = AutoPlaceSeed.RowSeedCounts[spot.RowName] + 1
         end
     end
     
     return success
 end
 
--- Process single plant tool from backpack
-function AutoPlace.ProcessPlant(plantTool)
+-- Process single seed from backpack
+function AutoPlaceSeed.ProcessSeed(seedTool)
     -- Wait if already processing (one by one)
-    while AutoPlace.IsProcessing do
+    while AutoPlaceSeed.IsProcessing do
         task.wait(0.1)
     end
     
-    AutoPlace.IsProcessing = true
+    AutoPlaceSeed.IsProcessing = true
     
-    if not AutoPlace.IsRunning or not AutoPlace.Settings.AutoPlaceEnabled then
-        AutoPlace.IsProcessing = false
+    if not AutoPlaceSeed.IsRunning or not AutoPlaceSeed.Settings.AutoPlaceSeedsEnabled then
+        AutoPlaceSeed.IsProcessing = false
         return false
     end
     
-    -- Validate plant name (80% similarity)
-    local isValid = AutoPlace.IsValidPlantName(plantTool.Name)
-    if not isValid then
-        AutoPlace.IsProcessing = false
+    -- Get seed info
+    local seedInfo = AutoPlaceSeed.GetSeedInfo(seedTool)
+    if not seedInfo then
+        AutoPlaceSeed.IsProcessing = false
         return false
     end
     
-    -- Get plant info
-    local plantInfo = AutoPlace.GetPlantInfo(plantTool)
-    if not plantInfo then
-        AutoPlace.IsProcessing = false
-        return false
-    end
-    
-    -- Check filter
-    if not AutoPlace.ShouldPlacePlant(plantInfo) then
-        AutoPlace.IsProcessing = false
+    -- Check if should place this seed
+    if not AutoPlaceSeed.ShouldPlaceSeed(seedTool) then
+        AutoPlaceSeed.IsProcessing = false
         return false
     end
     
     -- Find available spots (uses cache)
-    local spots = AutoPlace.FindAvailableSpots()
+    local spots = AutoPlaceSeed.FindAvailableSpots()
     if #spots == 0 then
-        AutoPlace.IsProcessing = false
+        AutoPlaceSeed.IsProcessing = false
         return false
     end
     
     -- Pick first available spot and verify row isn't full
     local selectedSpot = nil
-    local plotNum = AutoPlace.GetOwnedPlot()
+    local plotNum = AutoPlaceSeed.GetOwnedPlot()
     
     if plotNum then
         local plot = workspace.Plots:FindFirstChild(plotNum)
@@ -496,26 +361,21 @@ function AutoPlace.ProcessPlant(plantTool)
                 -- CRITICAL: Check if this CFrame position is already used
                 local cframeKey = tostring(spot.Floor.CFrame.Position)
                 
-                if not AutoPlace.UsedCFrames[cframeKey] then
-                    -- Get the row and count actual plants in it
+                if not AutoPlaceSeed.UsedCFrames[cframeKey] then
+                    -- Read Plants attribute DIRECTLY from the row
                     local row = plot.Rows:FindFirstChild(spot.RowName)
                     if row then
-                        local grass = row:FindFirstChild("Grass")
+                        local plantsCount = row:GetAttribute("Plants") or 0
                         
-                        -- Count actual plants in this row RIGHT NOW
-                        local actualCount = AutoPlace.CountPlantsInRow(spot.RowName, grass)
-                        
-                        print("[AutoPlace DEBUG] Row " .. spot.RowName .. " has " .. actualCount .. " items (plants+seeds)")
-                        
-                        -- Check if row has space (less than 5 plants)
-                        if actualCount < AutoPlace.MaxPlantsPerRow then
+                        -- Check if row has space (less than 5 items)
+                        if plantsCount < AutoPlaceSeed.MaxSeedsPerRow then
                             selectedSpot = spot
                             -- Mark this CFrame as used
-                            AutoPlace.UsedCFrames[cframeKey] = true
-                            print("[AutoPlace] ✅ Placing in row " .. spot.RowName .. " (" .. actualCount .. "/5)")
+                            AutoPlaceSeed.UsedCFrames[cframeKey] = true
+                            print("[AutoPlaceSeed] ✅ Row " .. spot.RowName .. " has " .. plantsCount .. "/5 → Placing")
                             break
                         else
-                            print("[AutoPlace] ❌ Row " .. spot.RowName .. " is full (" .. actualCount .. "/5), skipping...")
+                            print("[AutoPlaceSeed] ❌ Row " .. spot.RowName .. " is FULL (" .. plantsCount .. "/5) → Next row")
                         end
                     end
                 end
@@ -524,73 +384,89 @@ function AutoPlace.ProcessPlant(plantTool)
     end
     
     if not selectedSpot then
-        AutoPlace.IsProcessing = false
+        AutoPlaceSeed.IsProcessing = false
         return false
     end
     
-    -- Equip plant
-    if not AutoPlace.MovePlantToCharacter(plantTool) then
-        AutoPlace.IsProcessing = false
-        return false
-    end
-    
-    task.wait(0.1)  -- Reduced: Just enough for server sync
-    
-    -- Place plant
-    local placed = AutoPlace.PlacePlant(plantInfo, selectedSpot)
-    
-    if placed then
-        -- Wait for the Plants attribute to actually update (with timeout)
-        local plotNum = AutoPlace.GetOwnedPlot()
-        if plotNum then
-            pcall(function()
-                local plot = workspace.Plots:FindFirstChild(tostring(plotNum))
-                local row = plot.Rows:FindFirstChild(selectedSpot.RowName)
-                if row then
-                    local oldCount = row:GetAttribute("Plants") or 0
-                    local startTime = tick()
-                    local maxWait = 2  -- Wait up to 2 seconds
-                    
-                    -- Wait for Plants attribute to change
-                    while (tick() - startTime) < maxWait do
-                        local newCount = row:GetAttribute("Plants") or 0
-                        if newCount > oldCount then
-                            print("[AutoPlace] ✅ Attribute updated: " .. oldCount .. " → " .. newCount)
-                            break
-                        end
-                        task.wait(0.05)
-                    end
-                    
-                    -- If timeout, still continue but warn
-                    if (tick() - startTime) >= maxWait then
-                        warn("[AutoPlace] ⚠️ Attribute did not update in time, continuing anyway")
-                    end
+    -- Move seed to character (equip) if not already equipped
+    local character = AutoPlaceSeed.References.LocalPlayer.Character
+    if seedTool.Parent ~= character then
+        local success = pcall(function()
+            local backpack = AutoPlaceSeed.References.Backpack
+            
+            if not character or not seedTool:IsA("Tool") then
+                return
+            end
+            
+            -- Unequip any currently equipped tools
+            for _, tool in ipairs(character:GetChildren()) do
+                if tool:IsA("Tool") and tool ~= seedTool then
+                    tool.Parent = backpack
                 end
-            end)
+            end
+            
+            -- Equip the seed tool
+            seedTool.Parent = character
+        end)
+        
+        if not success then
+            AutoPlaceSeed.IsProcessing = false
+            return false
         end
         
-        -- Invalidate cache so next placement reads fresh count
-        AutoPlace.InvalidateCache()
+        task.wait(0.1)
     end
     
-    AutoPlace.IsProcessing = false
+    -- Place seed
+    local placed = AutoPlaceSeed.PlaceSeed(seedInfo, selectedSpot)
+    
+    if placed then
+        -- Wait for server to update the Plants attribute and replicate to client
+        task.wait(0.3)
+        
+        -- Invalidate cache so next placement reads fresh count
+        AutoPlaceSeed.InvalidateCache()
+    end
+    
+    AutoPlaceSeed.IsProcessing = false
     return placed
 end
 
--- Process all plants in backpack
-function AutoPlace.ProcessAllPlants()
-    if not AutoPlace.IsRunning or not AutoPlace.Settings.AutoPlaceEnabled then
+-- Process all seeds in backpack and character
+function AutoPlaceSeed.ProcessAllSeeds()
+    if not AutoPlaceSeed.IsRunning or not AutoPlaceSeed.Settings.AutoPlaceSeedsEnabled then
         return 0
     end
     
     local placed = 0
     
-    for _, item in ipairs(AutoPlace.References.Backpack:GetChildren()) do
+    -- Check backpack
+    for _, item in ipairs(AutoPlaceSeed.References.Backpack:GetChildren()) do
         if item:IsA("Tool") then
-            local success = AutoPlace.ProcessPlant(item)
-            if success then
-                placed = placed + 1
-                task.wait(0.2) -- Small delay between placements
+            local itemName = item.Name
+            if #itemName >= 5 and string.sub(itemName, -5) == " Seed" then
+                if AutoPlaceSeed.ShouldPlaceSeed(item) then
+                    if AutoPlaceSeed.ProcessSeed(item) then
+                        placed = placed + 1
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Check character (seeds might be equipped)
+    local character = AutoPlaceSeed.References.LocalPlayer.Character
+    if character then
+        for _, item in ipairs(character:GetChildren()) do
+            if item:IsA("Tool") then
+                local itemName = item.Name
+                if #itemName >= 5 and string.sub(itemName, -5) == " Seed" then
+                    if AutoPlaceSeed.ShouldPlaceSeed(item) then
+                        if AutoPlaceSeed.ProcessSeed(item) then
+                            placed = placed + 1
+                        end
+                    end
+                end
             end
         end
     end
@@ -600,14 +476,14 @@ end
 
 --[[
     ========================================
-    Event System (Event-Driven)
+    Event System
     ========================================
 --]]
 
 -- Update cache incrementally when a spot becomes available/unavailable
-function AutoPlace.UpdateSpotInCache(spot, isAvailable, rowName)
+function AutoPlaceSeed.UpdateSpotInCache(spot, isAvailable, rowName)
     if isAvailable then
-        table.insert(AutoPlace.CachedSpots, {
+        table.insert(AutoPlaceSeed.CachedSpots, {
             Floor = spot,
             CFrame = spot.CFrame,
             PivotOffset = spot.PivotOffset,
@@ -615,27 +491,24 @@ function AutoPlace.UpdateSpotInCache(spot, isAvailable, rowName)
             SpotName = spot.Name
         })
     else
-        for i, cachedSpot in ipairs(AutoPlace.CachedSpots) do
+        for i, cachedSpot in ipairs(AutoPlaceSeed.CachedSpots) do
             if cachedSpot.Floor == spot then
-                table.remove(AutoPlace.CachedSpots, i)
+                table.remove(AutoPlaceSeed.CachedSpots, i)
                 break
             end
         end
     end
 end
 
--- Setup Row-Level Model tracking (efficient monitoring)
-function AutoPlace.SetupPlotMonitoring()
-    -- Disconnect old plot attribute connections
-    for _, conn in ipairs(AutoPlace.PlotAttributeConnections) do
+-- Setup Row-Level monitoring
+function AutoPlaceSeed.SetupPlotMonitoring()
+    for _, conn in ipairs(AutoPlaceSeed.PlotAttributeConnections) do
         conn:Disconnect()
     end
-    AutoPlace.PlotAttributeConnections = {}
+    AutoPlaceSeed.PlotAttributeConnections = {}
     
-    local plotNum = AutoPlace.GetOwnedPlot()
-    if not plotNum then
-        return
-    end
+    local plotNum = AutoPlaceSeed.GetOwnedPlot()
+    if not plotNum then return end
     
     pcall(function()
         local plot = workspace.Plots:FindFirstChild(plotNum)
@@ -655,13 +528,13 @@ function AutoPlace.SetupPlotMonitoring()
                             if child:IsA("Model") then
                                 -- Mark this CFrame as used IMMEDIATELY
                                 local cframeKey = tostring(spot.CFrame.Position)
-                                AutoPlace.UsedCFrames[cframeKey] = true
+                                AutoPlaceSeed.UsedCFrames[cframeKey] = true
                                 
                                 -- Update row count
-                                if AutoPlace.RowPlantCounts[row.Name] then
-                                    AutoPlace.RowPlantCounts[row.Name] = AutoPlace.RowPlantCounts[row.Name] + 1
+                                if AutoPlaceSeed.RowSeedCounts[row.Name] then
+                                    AutoPlaceSeed.RowSeedCounts[row.Name] = AutoPlaceSeed.RowSeedCounts[row.Name] + 1
                                 else
-                                    AutoPlace.RowPlantCounts[row.Name] = AutoPlace.CountPlantsInRow(row.Name, grass)
+                                    AutoPlaceSeed.RowSeedCounts[row.Name] = AutoPlaceSeed.CountSeedsInRow(row.Name, grass)
                                 end
                             end
                         end)
@@ -681,20 +554,20 @@ function AutoPlace.SetupPlotMonitoring()
                                 -- If empty, unmark this CFrame (spot available again!)
                                 if isEmpty then
                                     local cframeKey = tostring(spot.CFrame.Position)
-                                    AutoPlace.UsedCFrames[cframeKey] = nil
+                                    AutoPlaceSeed.UsedCFrames[cframeKey] = nil
                                 end
                                 
                                 -- Update row count
-                                if AutoPlace.RowPlantCounts[row.Name] then
-                                    AutoPlace.RowPlantCounts[row.Name] = math.max(0, AutoPlace.RowPlantCounts[row.Name] - 1)
+                                if AutoPlaceSeed.RowSeedCounts[row.Name] then
+                                    AutoPlaceSeed.RowSeedCounts[row.Name] = math.max(0, AutoPlaceSeed.RowSeedCounts[row.Name] - 1)
                                 else
-                                    AutoPlace.RowPlantCounts[row.Name] = AutoPlace.CountPlantsInRow(row.Name, grass)
+                                    AutoPlaceSeed.RowSeedCounts[row.Name] = AutoPlaceSeed.CountSeedsInRow(row.Name, grass)
                                 end
                             end
                         end)
                         
-                        table.insert(AutoPlace.PlotAttributeConnections, addedConn)
-                        table.insert(AutoPlace.PlotAttributeConnections, removedConn)
+                        table.insert(AutoPlaceSeed.PlotAttributeConnections, addedConn)
+                        table.insert(AutoPlaceSeed.PlotAttributeConnections, removedConn)
                     end
                 end
             end
@@ -702,33 +575,42 @@ function AutoPlace.SetupPlotMonitoring()
     end)
 end
 
-function AutoPlace.SetupEventListeners()
+-- Setup event listeners for character tool changes
+function AutoPlaceSeed.SetupEventListeners()
     -- Disconnect old connections
-    if AutoPlace.BackpackConnection then
-        AutoPlace.BackpackConnection:Disconnect()
-        AutoPlace.BackpackConnection = nil
+    if AutoPlaceSeed.BackpackConnection then
+        AutoPlaceSeed.BackpackConnection:Disconnect()
+        AutoPlaceSeed.BackpackConnection = nil
     end
     
-    for _, conn in ipairs(AutoPlace.ChildAddedConnections) do
-        conn:Disconnect()
-    end
-    AutoPlace.ChildAddedConnections = {}
-    
-    -- Listen for new items added to backpack
-    AutoPlace.BackpackConnection = AutoPlace.References.Backpack.ChildAdded:Connect(function(item)
-        if not item:IsA("Tool") or not AutoPlace.Settings.AutoPlaceEnabled or not AutoPlace.IsRunning then
-            return
-        end
-        
-        if not AutoPlace.IsValidPlantName(item.Name) then
-            return
-        end
-        
-        task.spawn(function()
-            task.wait(0.05)  -- Minimal delay for item to load
-            AutoPlace.ProcessPlant(item)
+    -- Monitor Character for tool changes (seeds stay in character with new name)
+    local character = AutoPlaceSeed.References.LocalPlayer.Character
+    if character then
+        AutoPlaceSeed.BackpackConnection = character.ChildAdded:Connect(function(item)
+            -- OPTIMIZED: Check name first (fastest check)
+            local itemName = item.Name
+            if #itemName < 5 or string.sub(itemName, -5) ~= " Seed" then
+                return
+            end
+            
+            -- Then check type and state
+            if not item:IsA("Tool") or not AutoPlaceSeed.Settings.AutoPlaceSeedsEnabled or not AutoPlaceSeed.IsRunning then
+                return
+            end
+            
+            -- Check if this seed is selected
+            if not AutoPlaceSeed.ShouldPlaceSeed(item) then
+                return
+            end
+            
+            task.spawn(function()
+                task.wait(0.1)  -- Wait for tool to fully load
+                if item.Parent == character then  -- Still in character
+                    AutoPlaceSeed.ProcessSeed(item)
+                end
+            end)
         end)
-    end)
+    end
 end
 
 --[[
@@ -738,10 +620,10 @@ end
 --]]
 
 -- Scan plot and rebuild UsedCFrames from actually placed items
-function AutoPlace.RebuildUsedCFrames()
-    AutoPlace.UsedCFrames = {}
+function AutoPlaceSeed.RebuildUsedCFrames()
+    AutoPlaceSeed.UsedCFrames = {}
     
-    local plotNum = AutoPlace.GetOwnedPlot()
+    local plotNum = AutoPlaceSeed.GetOwnedPlot()
     if not plotNum then return end
     
     local plot = workspace.Plots:FindFirstChild(plotNum)
@@ -765,7 +647,7 @@ function AutoPlace.RebuildUsedCFrames()
                     -- If spot has item, mark its CFrame as used
                     if hasItem then
                         local cframeKey = tostring(spot.CFrame.Position)
-                        AutoPlace.UsedCFrames[cframeKey] = true
+                        AutoPlaceSeed.UsedCFrames[cframeKey] = true
                     end
                 end
             end
@@ -773,209 +655,83 @@ function AutoPlace.RebuildUsedCFrames()
     end
 end
 
-function AutoPlace.Start()
-    if AutoPlace.IsRunning then
+function AutoPlaceSeed.Start()
+    if AutoPlaceSeed.IsRunning then
         return
     end
     
     -- Increment generation FIRST (invalidates all old tasks instantly, zero-cost!)
-    AutoPlace.StartGeneration = AutoPlace.StartGeneration + 1
-    local myGeneration = AutoPlace.StartGeneration
+    AutoPlaceSeed.StartGeneration = AutoPlaceSeed.StartGeneration + 1
+    local myGeneration = AutoPlaceSeed.StartGeneration
     
-    AutoPlace.IsRunning = true
+    AutoPlaceSeed.IsRunning = true
     
-    -- OPTIMIZED: Build plants set for fast lookups
-    AutoPlace.RebuildPlantsSet()
+    -- OPTIMIZED: Build seeds set for fast lookups
+    AutoPlaceSeed.RebuildSeedsSet()
     
     -- SMART: Rebuild UsedCFrames from what's already placed (only on first start)
-    if not next(AutoPlace.UsedCFrames) then
-        AutoPlace.RebuildUsedCFrames()
+    if not next(AutoPlaceSeed.UsedCFrames) then
+        AutoPlaceSeed.RebuildUsedCFrames()
     end
     
     -- Setup plot monitoring FIRST (real-time CFrame tracking)
-    AutoPlace.SetupPlotMonitoring()
+    AutoPlaceSeed.SetupPlotMonitoring()
     
-    -- Setup event system IMMEDIATELY (catch new plants)
-    AutoPlace.SetupEventListeners()
+    -- Setup event listener IMMEDIATELY (catch new seeds)
+    AutoPlaceSeed.SetupEventListeners()
     
-    -- Initial scan and process existing plants (with generation check)
+    -- Initial scan and process existing seeds (with generation check)
     task.spawn(function()
         -- OPTIMIZED: Single number check (faster than task.cancel())
-        if AutoPlace.StartGeneration ~= myGeneration then return end
+        if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
         
-        AutoPlace.FindAvailableSpots(true)
+        AutoPlaceSeed.FindAvailableSpots(true)
         
-        if AutoPlace.StartGeneration ~= myGeneration then return end
+        if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
         task.wait(0.05)
         
-        if AutoPlace.StartGeneration ~= myGeneration then return end
-        AutoPlace.ProcessAllPlants()
-    end)
-end
+        if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
+        AutoPlaceSeed.ProcessAllSeeds()
+    end) -- end of task.spawn function
+end -- end of AutoPlaceSeed.Start()
 
-function AutoPlace.Stop()
-    if not AutoPlace.IsRunning then
+function AutoPlaceSeed.Stop()
+    if not AutoPlaceSeed.IsRunning then
         return
     end
     
-    AutoPlace.IsRunning = false
+    AutoPlaceSeed.IsRunning = false
     
     -- Increment generation (all old tasks become invalid instantly, no cancellation needed!)
-    AutoPlace.StartGeneration = AutoPlace.StartGeneration + 1
+    AutoPlaceSeed.StartGeneration = AutoPlaceSeed.StartGeneration + 1
     
-    if AutoPlace.BackpackConnection then
-        AutoPlace.BackpackConnection:Disconnect()
-        AutoPlace.BackpackConnection = nil
+    -- Disconnect backpack listener
+    if AutoPlaceSeed.BackpackConnection then
+        AutoPlaceSeed.BackpackConnection:Disconnect()
+        AutoPlaceSeed.BackpackConnection = nil
     end
     
-    for _, conn in ipairs(AutoPlace.ChildAddedConnections) do
+    -- Disconnect plot monitors
+    for _, conn in ipairs(AutoPlaceSeed.PlotAttributeConnections) do
         conn:Disconnect()
     end
-    AutoPlace.ChildAddedConnections = {}
+    AutoPlaceSeed.PlotAttributeConnections = {}
     
-    for _, conn in ipairs(AutoPlace.PlotAttributeConnections) do
-        conn:Disconnect()
-    end
-    AutoPlace.PlotAttributeConnections = {}
-    
-    AutoPlace.CachedSpots = {}
-    AutoPlace.SpotsCacheValid = false
-    AutoPlace.RowPlantCounts = {}
+    AutoPlaceSeed.CachedSpots = {}
+    AutoPlaceSeed.SpotsCacheValid = false
+    AutoPlaceSeed.RowSeedCounts = {}
     -- DON'T clear UsedCFrames - only clear when actually removing items from plot
 end
 
-function AutoPlace.GetStatus()
+function AutoPlaceSeed.GetStatus()
     return {
-        IsRunning = AutoPlace.IsRunning,
-        AutoPlaceEnabled = AutoPlace.Settings.AutoPlaceEnabled,
-        TotalPlacements = AutoPlace.TotalPlacements,
-        TotalPickUps = AutoPlace.TotalPickUps,
-        SelectedPlants = AutoPlace.Settings.SelectedPlants or {},
-        DamageFilter = AutoPlace.Settings.PlantDamageFilter or 0
+        IsRunning = AutoPlaceSeed.IsRunning,
+        AutoPlaceSeedsEnabled = AutoPlaceSeed.Settings.AutoPlaceSeedsEnabled,
+        TotalPlacements = AutoPlaceSeed.TotalPlacements,
+        AvailableSpots = #AutoPlaceSeed.CachedSpots,
+        RowCounts = AutoPlaceSeed.RowSeedCounts
     }
 end
 
---[[
-    ========================================
-    Auto Pick Up System (Event-Driven)
-    ========================================
---]]
-
--- Check if plant should be picked up based on damage filter
-function AutoPlace.ShouldPickUpPlant(plantModel)
-    if not AutoPlace.Settings.AutoPickUpEnabled then
-        return false
-    end
-    
-    local pickupFilter = AutoPlace.Settings.PickUpDamageFilter or 0
-    local damage = plantModel:GetAttribute("Damage") or 0
-    
-    -- If filter is 0, pick up ALL plants
-    if pickupFilter == 0 then
-        return true
-    end
-    
-    -- Otherwise, pick up plants with damage <= filter
-    return damage <= pickupFilter
-end
-
--- Pick up a single plant
-function AutoPlace.PickUpPlant(plantModel)
-    local id = plantModel:GetAttribute("ID")
-    if not id then return false end
-    
-    local damage = plantModel:GetAttribute("Damage") or 0
-    
-    local success = pcall(function()
-        AutoPlace.References.RemoveItemRemote:FireServer(id)
-    end)
-    
-    if success then
-        AutoPlace.TotalPickUps = AutoPlace.TotalPickUps + 1
-    end
-    
-    return success
-end
-
--- Setup event-driven monitoring for planted items
-function AutoPlace.SetupPickUpMonitoring()
-    -- Disconnect old connections
-    for _, conn in ipairs(AutoPlace.PlantMonitorConnections) do
-        conn:Disconnect()
-    end
-    AutoPlace.PlantMonitorConnections = {}
-    
-    if not AutoPlace.Settings.AutoPickUpEnabled then
-        return
-    end
-    
-    local plotNum = AutoPlace.GetOwnedPlot()
-    if not plotNum then return end
-    
-    pcall(function()
-        local plot = workspace.Plots:FindFirstChild(plotNum)
-        if not plot then return end
-        
-        local plants = plot:FindFirstChild("Plants")
-        if not plants then return end
-        
-        -- Monitor existing plants
-        for _, plantModel in ipairs(plants:GetChildren()) do
-            if plantModel:IsA("Model") then
-                -- Check immediately
-                if AutoPlace.ShouldPickUpPlant(plantModel) then
-                    task.spawn(function()
-                        task.wait(0.1)  -- Small delay to ensure attributes loaded
-                        AutoPlace.PickUpPlant(plantModel)
-                    end)
-                else
-                    -- Monitor for Damage attribute changes
-                    local conn = plantModel:GetAttributeChangedSignal("Damage"):Connect(function()
-                        if AutoPlace.ShouldPickUpPlant(plantModel) then
-                            AutoPlace.PickUpPlant(plantModel)
-                        end
-                    end)
-                    table.insert(AutoPlace.PlantMonitorConnections, conn)
-                end
-            end
-        end
-        
-        -- Monitor NEW plants being added
-        local addedConn = plants.ChildAdded:Connect(function(plantModel)
-            if not plantModel:IsA("Model") then return end
-            
-            task.wait(0.1)  -- Wait for attributes to load
-            
-            -- Check if should pick up immediately
-            if AutoPlace.ShouldPickUpPlant(plantModel) then
-                AutoPlace.PickUpPlant(plantModel)
-            else
-                -- Monitor for future damage changes
-                local damageConn = plantModel:GetAttributeChangedSignal("Damage"):Connect(function()
-                    if AutoPlace.ShouldPickUpPlant(plantModel) then
-                        AutoPlace.PickUpPlant(plantModel)
-                    end
-                end)
-                table.insert(AutoPlace.PlantMonitorConnections, damageConn)
-            end
-        end)
-        
-        table.insert(AutoPlace.PlantMonitorConnections, addedConn)
-    end)
-end
-
--- Start Auto Pick Up
-function AutoPlace.StartPickUp()
-    AutoPlace.SetupPickUpMonitoring()
-end
-
--- Stop Auto Pick Up
-function AutoPlace.StopPickUp()
-    for _, conn in ipairs(AutoPlace.PlantMonitorConnections) do
-        conn:Disconnect()
-    end
-    AutoPlace.PlantMonitorConnections = {}
-end
-
-return AutoPlace
+return AutoPlaceSeed
 
