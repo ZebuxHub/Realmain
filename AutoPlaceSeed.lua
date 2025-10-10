@@ -424,11 +424,11 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
     local placed = AutoPlaceSeed.PlaceSeed(seedInfo, selectedSpot)
     
     if placed then
-        -- Wait longer for server to update Plants attribute and replicate to client
-        task.wait(0.5)
-        
-        -- Invalidate cache so next placement reads fresh count
+        -- Invalidate cache IMMEDIATELY so next placement rescans all rows
         AutoPlaceSeed.InvalidateCache()
+        
+        -- Small wait for server to process
+        task.wait(0.2)
     end
     
     AutoPlaceSeed.IsProcessing = false
