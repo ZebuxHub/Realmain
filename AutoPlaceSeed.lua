@@ -504,38 +504,56 @@ function AutoPlaceSeed.SetupPlotMonitoring()
         for _, row in ipairs(rows:GetChildren()) do
             local grass = row:FindFirstChild("Grass")
             if grass then
-                local addedConn = grass.ChildAdded:Connect(function(child)
-                    if child:IsA("Model") then
-                        local spot = child.Parent
-                        if spot then
-                            AutoPlaceSeed.UpdateSpotInCache(spot, false, row.Name)
-                            -- Update row count
-                            if AutoPlaceSeed.RowSeedCounts[row.Name] then
-                                AutoPlaceSeed.RowSeedCounts[row.Name] = AutoPlaceSeed.RowSeedCounts[row.Name] + 1
-                            else
-                                AutoPlaceSeed.RowSeedCounts[row.Name] = AutoPlaceSeed.CountSeedsInRow(row.Name, grass)
+                -- Monitor each Floor spot for real-time CFrame tracking
+                for _, spot in ipairs(grass:GetChildren()) do
+                    if spot:IsA("Model") and spot.Name == "Floor" then
+                        -- Track when items added to THIS spot
+                        local addedConn = spot.ChildAdded:Connect(function(child)
+                            if child:IsA("Model") then
+                                -- Mark this CFrame as used IMMEDIATELY
+                                local cframeKey = tostring(spot.CFrame.Position)
+                                AutoPlaceSeed.UsedCFrames[cframeKey] = true
+                                
+                                -- Update row count
+                                if AutoPlaceSeed.RowSeedCounts[row.Name] then
+                                    AutoPlaceSeed.RowSeedCounts[row.Name] = AutoPlaceSeed.RowSeedCounts[row.Name] + 1
+                                else
+                                    AutoPlaceSeed.RowSeedCounts[row.Name] = AutoPlaceSeed.CountSeedsInRow(row.Name, grass)
+                                end
                             end
-                        end
-                    end
-                end)
-                
-                local removedConn = grass.ChildRemoved:Connect(function(child)
-                    if child:IsA("Model") then
-                        local spot = child.Parent
-                        if spot and spot:GetAttribute("CanPlace") == true then
-                            AutoPlaceSeed.UpdateSpotInCache(spot, true, row.Name)
-                            -- Update row count
-                            if AutoPlaceSeed.RowSeedCounts[row.Name] then
-                                AutoPlaceSeed.RowSeedCounts[row.Name] = math.max(0, AutoPlaceSeed.RowSeedCounts[row.Name] - 1)
-                            else
-                                AutoPlaceSeed.RowSeedCounts[row.Name] = AutoPlaceSeed.CountSeedsInRow(row.Name, grass)
+                        end)
+                        
+                        -- Track when items removed from THIS spot
+                        local removedConn = spot.ChildRemoved:Connect(function(child)
+                            if child:IsA("Model") then
+                                -- Check if spot is now completely empty
+                                local isEmpty = true
+                                for _, remaining in ipairs(spot:GetChildren()) do
+                                    if remaining:IsA("Model") then
+                                        isEmpty = false
+                                        break
+                                    end
+                                end
+                                
+                                -- If empty, unmark this CFrame (spot available again!)
+                                if isEmpty then
+                                    local cframeKey = tostring(spot.CFrame.Position)
+                                    AutoPlaceSeed.UsedCFrames[cframeKey] = nil
+                                end
+                                
+                                -- Update row count
+                                if AutoPlaceSeed.RowSeedCounts[row.Name] then
+                                    AutoPlaceSeed.RowSeedCounts[row.Name] = math.max(0, AutoPlaceSeed.RowSeedCounts[row.Name] - 1)
+                                else
+                                    AutoPlaceSeed.RowSeedCounts[row.Name] = AutoPlaceSeed.CountSeedsInRow(row.Name, grass)
+                                end
                             end
-                        end
+                        end)
+                        
+                        table.insert(AutoPlaceSeed.PlotAttributeConnections, addedConn)
+                        table.insert(AutoPlaceSeed.PlotAttributeConnections, removedConn)
                     end
-                end)
-                
-                table.insert(AutoPlaceSeed.PlotAttributeConnections, addedConn)
-                table.insert(AutoPlaceSeed.PlotAttributeConnections, removedConn)
+                end
             end
         end
     end)
@@ -631,8 +649,13 @@ function AutoPlaceSeed.Start()
     -- OPTIMIZED: Build seeds set for fast lookups
     AutoPlaceSeed.RebuildSeedsSet()
     
-    -- CRITICAL: Rebuild UsedCFrames from what's already placed
-    AutoPlaceSeed.RebuildUsedCFrames()
+    -- SMART: Rebuild UsedCFrames from what's already placed (only on first start)
+    if not next(AutoPlaceSeed.UsedCFrames) then
+        AutoPlaceSeed.RebuildUsedCFrames()
+    end
+    
+    -- Setup plot monitoring FIRST (real-time CFrame tracking)
+    AutoPlaceSeed.SetupPlotMonitoring()
     
     -- Initial scan
     task.spawn(function()
@@ -642,15 +665,9 @@ function AutoPlaceSeed.Start()
     -- Setup backpack event listener
     AutoPlaceSeed.SetupEventListeners()
     
-    -- Setup plot monitoring
-    task.spawn(function()
-        task.wait(0.3)
-        AutoPlaceSeed.SetupPlotMonitoring()
-    end)
-    
     -- Process existing seeds
     task.spawn(function()
-        task.wait(0.2)
+        task.wait(0.1)  -- Minimal delay for setup to complete
         AutoPlaceSeed.ProcessAllSeeds()
     end)
 end
