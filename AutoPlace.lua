@@ -782,6 +782,30 @@ function AutoPlace.Start()
         
         if AutoPlace.StartGeneration ~= myGeneration then return end
         AutoPlace.ProcessAllPlants()
+        
+        -- Keep checking periodically if there are plants and available spots
+        while AutoPlace.IsRunning and AutoPlace.StartGeneration == myGeneration do
+            task.wait(2) -- Check every 2 seconds
+            
+            if AutoPlace.StartGeneration ~= myGeneration then return end
+            
+            -- Check if there are plants in backpack
+            local hasPlants = false
+            for _, item in ipairs(AutoPlace.References.Backpack:GetChildren()) do
+                if item:IsA("Tool") and AutoPlace.IsValidPlantName(item.Name) then
+                    local plantInfo = AutoPlace.GetPlantInfo(item)
+                    if plantInfo and AutoPlace.ShouldPlacePlant(plantInfo) then
+                        hasPlants = true
+                        break
+                    end
+                end
+            end
+            
+            if hasPlants then
+                print("[AutoPlace] 🔄 Retrying placement (plants available)...")
+                AutoPlace.ProcessAllPlants()
+            end
+        end
     end)
 end
 
