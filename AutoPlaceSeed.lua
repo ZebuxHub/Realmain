@@ -424,11 +424,11 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
     local placed = AutoPlaceSeed.PlaceSeed(seedInfo, selectedSpot)
     
     if placed then
-        -- Invalidate cache IMMEDIATELY so next placement rescans all rows
-        AutoPlaceSeed.InvalidateCache()
+        -- Wait for server to update the count before invalidating cache
+        task.wait(0.4)
         
-        -- Small wait for server to process
-        task.wait(0.2)
+        -- Invalidate cache so next placement rescans with fresh counts
+        AutoPlaceSeed.InvalidateCache()
     end
     
     AutoPlaceSeed.IsProcessing = false
@@ -485,6 +485,18 @@ function AutoPlaceSeed.ProcessAllSeeds()
     end
     
     print("[AutoPlaceSeed] 📊 Finished scan. Total placed: " .. placed)
+    
+    -- If we placed at least 1, immediately check for more seeds (don't wait for retry loop)
+    if placed > 0 and AutoPlaceSeed.IsRunning then
+        task.defer(function()
+            task.wait(0.3) -- Small delay
+            if AutoPlaceSeed.IsRunning then
+                print("[AutoPlaceSeed] ♻️ Checking for more seeds immediately...")
+                AutoPlaceSeed.ProcessAllSeeds()
+            end
+        end)
+    end
+    
     return placed
 end
 
@@ -788,4 +800,5 @@ function AutoPlaceSeed.GetStatus()
 end
 
 return AutoPlaceSeed
+
 
