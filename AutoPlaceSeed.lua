@@ -107,27 +107,52 @@ function AutoPlaceSeed.GetOwnedPlot()
     return nil
 end
 
--- Count seeds in a specific row (including stacked items in each spot)
+-- Count ALL items (plants + seeds) in a specific row (they share the 5 item limit)
 function AutoPlaceSeed.CountSeedsInRow(rowName, grass)
     local count = 0
+    
+    -- Count plants in Grass folder
     if grass then
-        -- Each spot (Floor) can have multiple seeds stacked
         for _, spot in ipairs(grass:GetChildren()) do
             if spot:IsA("Model") and spot.Name == "Floor" then
-                -- Count all models inside this spot (stacked seeds)
+                -- Count all models inside this spot (stacked plants)
                 for _, item in ipairs(spot:GetChildren()) do
                     if item:IsA("Model") then
                         count = count + 1
                     end
                 end
             else
-                -- If it's not a Floor, it might be a direct child seed (old format)
+                -- If it's not a Floor, it might be a direct child plant (old format)
                 if spot:IsA("Model") and spot.Name ~= "Floor" then
                     count = count + 1
                 end
             end
         end
     end
+    
+    -- Add seeds from workspace.ScriptedMap.Countdowns
+    local success = pcall(function()
+        local countdowns = workspace:FindFirstChild("ScriptedMap")
+        if countdowns then
+            countdowns = countdowns:FindFirstChild("Countdowns")
+            if countdowns then
+                for _, seed in ipairs(countdowns:GetChildren()) do
+                    if seed:IsA("Model") then
+                        local seedRow = seed:GetAttribute("Row")
+                        -- Compare row numbers
+                        if seedRow and tostring(seedRow) == tostring(rowName) then
+                            count = count + 1
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    
+    if not success then
+        warn("[AutoPlaceSeed] Failed to count seeds in row " .. rowName)
+    end
+    
     return count
 end
 
