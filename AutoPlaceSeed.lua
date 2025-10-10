@@ -45,6 +45,9 @@ local AutoPlace = {
     ChildAddedConnections = {},
     PlotAttributeConnections = {},
     
+    -- Task Management (for spam toggle prevention)
+    InitializationTask = nil,
+    
     -- Dependencies (Set by Main.lua)
     Services = nil,
     References = nil,
@@ -748,9 +751,16 @@ function AutoPlace.Start()
     AutoPlace.SetupEventListeners()
     
     -- Initial scan and process existing plants
-    task.spawn(function()
+    AutoPlace.InitializationTask = task.spawn(function()
+        -- Check if still running (spam toggle protection)
+        if not AutoPlace.IsRunning then return end
+        
         AutoPlace.FindAvailableSpots(true)
+        
+        if not AutoPlace.IsRunning then return end
         task.wait(0.05)  -- Minimal delay for scan to complete
+        
+        if not AutoPlace.IsRunning then return end
         AutoPlace.ProcessAllPlants()
     end)
 end
@@ -761,6 +771,12 @@ function AutoPlace.Stop()
     end
     
     AutoPlace.IsRunning = false
+    
+    -- Cancel initialization task if still running
+    if AutoPlace.InitializationTask then
+        task.cancel(AutoPlace.InitializationTask)
+        AutoPlace.InitializationTask = nil
+    end
     
     if AutoPlace.BackpackConnection then
         AutoPlace.BackpackConnection:Disconnect()
