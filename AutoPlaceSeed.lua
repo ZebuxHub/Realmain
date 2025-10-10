@@ -36,8 +36,8 @@ local AutoPlaceSeed = {
     BackpackConnection = nil,
     PlotAttributeConnections = {},
     
-    -- Task Management (for spam toggle prevention)
-    InitializationTask = nil,
+    -- Task Management (spam toggle prevention with zero-cost generation)
+    StartGeneration = 0,  -- Increment on each Start(), tasks check if they're outdated
     
     -- Dependencies (Set by Main.lua)
     Services = nil,
@@ -647,6 +647,10 @@ function AutoPlaceSeed.Start()
         return
     end
     
+    -- Increment generation FIRST (invalidates all old tasks instantly, zero-cost!)
+    AutoPlaceSeed.StartGeneration = AutoPlaceSeed.StartGeneration + 1
+    local myGeneration = AutoPlaceSeed.StartGeneration
+    
     AutoPlaceSeed.IsRunning = true
     
     -- OPTIMIZED: Build seeds set for fast lookups
@@ -663,17 +667,17 @@ function AutoPlaceSeed.Start()
     -- Setup event listener IMMEDIATELY (catch new seeds)
     AutoPlaceSeed.SetupEventListeners()
     
-    -- Initial scan and process existing seeds
-    AutoPlaceSeed.InitializationTask = task.spawn(function()
-        -- Check if still running (spam toggle protection)
-        if not AutoPlaceSeed.IsRunning then return end
+    -- Initial scan and process existing seeds (with generation check)
+    task.spawn(function()
+        -- OPTIMIZED: Single number check (faster than task.cancel())
+        if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
         
         AutoPlaceSeed.FindAvailableSpots(true)
         
-        if not AutoPlaceSeed.IsRunning then return end
-        task.wait(0.05)  -- Minimal delay for scan to complete
+        if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
+        task.wait(0.05)
         
-        if not AutoPlaceSeed.IsRunning then return end
+        if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
         AutoPlaceSeed.ProcessAllSeeds()
     end)
 end
@@ -685,11 +689,8 @@ function AutoPlaceSeed.Stop()
     
     AutoPlaceSeed.IsRunning = false
     
-    -- Cancel initialization task if still running
-    if AutoPlaceSeed.InitializationTask then
-        task.cancel(AutoPlaceSeed.InitializationTask)
-        AutoPlaceSeed.InitializationTask = nil
-    end
+    -- Increment generation (all old tasks become invalid instantly, no cancellation needed!)
+    AutoPlaceSeed.StartGeneration = AutoPlaceSeed.StartGeneration + 1
     
     -- Disconnect backpack listener
     if AutoPlaceSeed.BackpackConnection then
