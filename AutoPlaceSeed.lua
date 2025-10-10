@@ -722,7 +722,8 @@ function AutoPlaceSeed.Start()
         if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
         AutoPlaceSeed.ProcessAllSeeds()
         
-        -- Monitor for changes in the plot (plants removed = spots available!)
+        -- Monitor workspace.Plots[X].Plants (when plants removed, spots open!)
+        -- Monitor workspace.ScriptedMap.Countdowns (when seeds removed, spots open!)
         local plotNum = AutoPlaceSeed.GetOwnedPlot()
         if plotNum then
             local plot = workspace.Plots:FindFirstChild(tostring(plotNum))
@@ -731,29 +732,39 @@ function AutoPlaceSeed.Start()
                 local scriptedMap = workspace:FindFirstChild("ScriptedMap")
                 local countdowns = scriptedMap and scriptedMap:FindFirstChild("Countdowns")
                 
-                -- Monitor when plants are REMOVED (creates available spots!)
+                -- When a PLANT is removed, a spot opens up!
                 if plants then
                     local plantRemovedConn = plants.ChildRemoved:Connect(function(removed)
                         if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
-                        print("[AutoPlaceSeed] 🔥 Plant removed! Checking for seeds to place...")
-                        task.wait(0.1) -- Small delay for server to update counts
-                        AutoPlaceSeed.ProcessAllSeeds()
+                        local rowNum = removed:GetAttribute("Row")
+                        if rowNum then
+                            print("[AutoPlaceSeed] 🔥 Plant removed from row " .. rowNum .. " → Spot available!")
+                            task.wait(0.1) -- Small delay for count to update
+                            AutoPlaceSeed.InvalidateCache()
+                            AutoPlaceSeed.ProcessAllSeeds()
+                        end
                     end)
                     table.insert(AutoPlaceSeed.PlotAttributeConnections, plantRemovedConn)
                 end
                 
-                -- Monitor when seeds are REMOVED (to stop retrying if no more seeds)
+                -- When a SEED countdown ends, a spot opens up!
                 if countdowns then
                     local seedRemovedConn = countdowns.ChildRemoved:Connect(function(removed)
                         if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
-                        print("[AutoPlaceSeed] 🌱 Seed countdown ended")
+                        local rowNum = removed:GetAttribute("Row")
+                        if rowNum then
+                            print("[AutoPlaceSeed] 🌱 Seed expired from row " .. rowNum .. " → Spot available!")
+                            task.wait(0.1) -- Small delay for count to update
+                            AutoPlaceSeed.InvalidateCache()
+                            AutoPlaceSeed.ProcessAllSeeds()
+                        end
                     end)
                     table.insert(AutoPlaceSeed.PlotAttributeConnections, seedRemovedConn)
                 end
+                
+                print("[AutoPlaceSeed] 👀 Now monitoring for plant/seed removal (instant reaction!)")
             end
         end
-        
-        print("[AutoPlaceSeed] 👀 Now monitoring for changes (event-driven)...")
     end) -- end of task.spawn function
 end -- end of AutoPlaceSeed.Start()
 
