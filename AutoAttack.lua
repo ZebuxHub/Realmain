@@ -105,12 +105,33 @@ function AutoAttack.EquipWeapon()
     return success
 end
 
--- Get all available targets from workspace
+-- Get player's owned plot number
+function AutoAttack.GetPlayerPlot()
+    local success, plotNum = pcall(function()
+        return AutoAttack.References.LocalPlayer:GetAttribute("Plot")
+    end)
+    
+    if success and plotNum then
+        return tostring(plotNum)
+    end
+    
+    return nil
+end
+
+-- Get all available targets from workspace (only in player's plot)
 function AutoAttack.GetAllTargets()
     local targets = {}
     
+    -- Get player's plot number
+    local playerPlot = AutoAttack.GetPlayerPlot()
+    if not playerPlot then return targets end
+    
     pcall(function()
-        local brainrots = workspace.ScriptedMap:FindFirstChild("Brainrots")
+        -- Get brainrots in player's plot
+        local plot = workspace.Plots:FindFirstChild(playerPlot)
+        if not plot then return end
+        
+        local brainrots = plot:FindFirstChild("Brainrots")
         if not brainrots then return end
         
         for _, brainrot in ipairs(brainrots:GetChildren()) do
@@ -120,8 +141,14 @@ function AutoAttack.GetAllTargets()
                 local health = brainrot:GetAttribute("Health") or 0
                 local maxHealth = brainrot:GetAttribute("MaxHealth") or 100
                 
-                -- Filter by player ID if specified
+                -- Skip if health is 0 or below
+                if health <= 0 then
+                    continue
+                end
+                
+                -- Filter by player ID if specified (optional targeting)
                 if AutoAttack.Settings.TargetPlayerID then
+                    -- Only target brainrots owned by this specific player
                     if associatedPlayer == AutoAttack.Settings.TargetPlayerID then
                         table.insert(targets, {
                             Model = brainrot,
@@ -133,7 +160,7 @@ function AutoAttack.GetAllTargets()
                         })
                     end
                 else
-                    -- Include all targets if no player filter
+                    -- Target ALL brainrots in my plot (any AssociatedPlayer)
                     table.insert(targets, {
                         Model = brainrot,
                         ID = id,
