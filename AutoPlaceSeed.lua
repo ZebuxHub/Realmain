@@ -722,61 +722,38 @@ function AutoPlaceSeed.Start()
         if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
         AutoPlaceSeed.ProcessAllSeeds()
         
-        -- Keep checking continuously if there are seeds and available spots
-        local failedAttempts = 0
-        while AutoPlaceSeed.IsRunning and AutoPlaceSeed.StartGeneration == myGeneration do
-            task.wait(0.3) -- Check every 0.3 seconds (very fast to catch when plants are picked up!)
-            
-            if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
-            
-            -- Check if there are seeds in backpack/character
-            local hasSeeds = false
-            
-            -- Check backpack
-            for _, item in ipairs(AutoPlaceSeed.References.Backpack:GetChildren()) do
-                if item:IsA("Tool") and string.sub(item.Name, -5) == " Seed" then
-                    if AutoPlaceSeed.ShouldPlaceSeed(item) then
-                        hasSeeds = true
-                        break
-                    end
-                end
-            end
-            
-            -- Check character if not found in backpack
-            if not hasSeeds then
-                local character = AutoPlaceSeed.References.LocalPlayer.Character
-                if character then
-                    for _, item in ipairs(character:GetChildren()) do
-                        if item:IsA("Tool") and string.sub(item.Name, -5) == " Seed" then
-                            if AutoPlaceSeed.ShouldPlaceSeed(item) then
-                                hasSeeds = true
-                                break
-                            end
-                        end
-                    end
-                end
-            end
-            
-            if hasSeeds then
-                print("[AutoPlaceSeed] 🔄 Retrying placement (seeds still available)...")
-                local placedCount = AutoPlaceSeed.ProcessAllSeeds()
+        -- Monitor for changes in the plot (plants removed = spots available!)
+        local plotNum = AutoPlaceSeed.GetOwnedPlot()
+        if plotNum then
+            local plot = workspace.Plots:FindFirstChild(tostring(plotNum))
+            if plot then
+                local plants = plot:FindFirstChild("Plants")
+                local scriptedMap = workspace:FindFirstChild("ScriptedMap")
+                local countdowns = scriptedMap and scriptedMap:FindFirstChild("Countdowns")
                 
-                -- If failed to place anything, increment counter
-                if placedCount == 0 then
-                    failedAttempts = failedAttempts + 1
-                    print("[AutoPlaceSeed] ⚠️ Failed attempt " .. failedAttempts .. "/3")
-                    
-                    -- Stop retrying after 3 failed attempts (all rows probably full)
-                    if failedAttempts >= 3 then
-                        print("[AutoPlaceSeed] 🛑 Stopping retry loop (3 failed attempts, rows likely full)")
-                        break
-                    end
-                else
-                    -- Reset counter if we successfully placed something
-                    failedAttempts = 0
+                -- Monitor when plants are REMOVED (creates available spots!)
+                if plants then
+                    local plantRemovedConn = plants.ChildRemoved:Connect(function(removed)
+                        if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
+                        print("[AutoPlaceSeed] 🔥 Plant removed! Checking for seeds to place...")
+                        task.wait(0.1) -- Small delay for server to update counts
+                        AutoPlaceSeed.ProcessAllSeeds()
+                    end)
+                    table.insert(AutoPlaceSeed.PlotAttributeConnections, plantRemovedConn)
+                end
+                
+                -- Monitor when seeds are REMOVED (to stop retrying if no more seeds)
+                if countdowns then
+                    local seedRemovedConn = countdowns.ChildRemoved:Connect(function(removed)
+                        if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
+                        print("[AutoPlaceSeed] 🌱 Seed countdown ended")
+                    end)
+                    table.insert(AutoPlaceSeed.PlotAttributeConnections, seedRemovedConn)
                 end
             end
         end
+        
+        print("[AutoPlaceSeed] 👀 Now monitoring for changes (event-driven)...")
     end) -- end of task.spawn function
 end -- end of AutoPlaceSeed.Start()
 
