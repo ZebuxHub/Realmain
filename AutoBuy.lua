@@ -441,6 +441,139 @@ end
 
 --[[
     ========================================
+    Auto Buy Gear Functions
+    ========================================
+--]]
+
+-- Get all gears
+function AutoBuy.GetAllGears()
+    local gearList = {}
+    
+    for _, gearInstance in ipairs(AutoBuy.References.Gears:GetChildren()) do
+        table.insert(gearList, gearInstance.Name)
+    end
+    
+    table.sort(gearList)
+    return gearList
+end
+
+-- Get gear stock from UI
+function AutoBuy.GetGearStock(gearName)
+    local stock = 0
+    
+    local success = pcall(function()
+        local gearUI = AutoBuy.References.LocalPlayer.PlayerGui.Main.Gears.Frame.ScrollingFrame:FindFirstChild(gearName)
+        if gearUI and gearUI:FindFirstChild("Stock") then
+            local stockText = gearUI.Stock.Text
+            local stockNum = tonumber(stockText:match("%d+"))
+            if stockNum then
+                stock = stockNum
+            end
+        end
+    end)
+    
+    return stock
+end
+
+-- Get gear price
+function AutoBuy.GetGearPrice(gearName)
+    local gearInstance = AutoBuy.References.Gears:FindFirstChild(gearName)
+    if gearInstance then
+        return gearInstance:GetAttribute("Price") or 0
+    end
+    return 0
+end
+
+-- Check if should buy gear
+function AutoBuy.ShouldBuyGear(gearName)
+    if #AutoBuy.Settings.SelectedGears == 0 then
+        return true  -- Buy all gears if none selected
+    end
+    return table.find(AutoBuy.Settings.SelectedGears, gearName) ~= nil
+end
+
+-- Buy a gear
+function AutoBuy.PurchaseGear(gearName)
+    local success, err = pcall(function()
+        local args = {
+            [1] = gearName,
+            [2] = true
+        }
+        AutoBuy.References.BuyGearRemote:FireServer(unpack(args))
+    end)
+    
+    if success then
+        print("✅ [AutoBuy] Bought gear:", gearName)
+    else
+        print("❌ [AutoBuy] Failed to buy gear:", gearName, "-", err)
+    end
+    
+    return success
+end
+
+-- Process gear buying cycle
+function AutoBuy.ProcessGearCycle()
+    if not AutoBuy.IsRunning or not AutoBuy.Settings.AutoBuyGearEnabled then
+        return false, false
+    end
+    
+    local gearList = AutoBuy.GetAllGears()
+    local boughtAnything = false
+    
+    for _, gearName in ipairs(gearList) do
+        if not AutoBuy.IsRunning or not AutoBuy.Settings.AutoBuyGearEnabled then
+            break
+        end
+        
+        if AutoBuy.ShouldBuyGear(gearName) then
+            local currentMoney = AutoBuy.GetMoney()
+            local gearPrice = AutoBuy.GetGearPrice(gearName)
+            local gearStock = AutoBuy.GetGearStock(gearName)
+            
+            if currentMoney >= gearPrice and gearStock > 0 then
+                local success = AutoBuy.PurchaseGear(gearName)
+                
+                if success then
+                    boughtAnything = true
+                    task.wait(0.1)  -- Wait for server
+                    
+                    AutoBuy.LastMoney = AutoBuy.GetMoney()
+                    
+                    if AutoBuy.Brain then
+                        AutoBuy.Brain.UpdateMoney()
+                    end
+                end
+            end
+        end
+    end
+    
+    return true, boughtAnything
+end
+
+-- Buy gears until done
+function AutoBuy.BuyGearsUntilDone()
+    task.spawn(function()
+        local totalPurchases = 0
+        
+        while AutoBuy.IsRunning and AutoBuy.Settings.AutoBuyGearEnabled do
+            local success, boughtAnything = AutoBuy.ProcessGearCycle()
+            
+            if boughtAnything then
+                totalPurchases = totalPurchases + 1
+                task.wait(0.1)
+            else
+                break
+            end
+        end
+        
+        if totalPurchases > 0 then
+            print("✅ [AutoBuy] Bought " .. totalPurchases .. " gears")
+        end
+    end)
+end
+
+--[[
+    ========================================
     Return Module
     ========================================
 --]]
