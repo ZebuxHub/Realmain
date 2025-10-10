@@ -524,14 +524,17 @@ function AutoPlace.ProcessPlant(plantTool)
                         -- Count actual plants in this row RIGHT NOW
                         local actualCount = AutoPlace.CountPlantsInRow(spot.RowName, grass)
                         
+                        print("[AutoPlace DEBUG] Row " .. spot.RowName .. " has " .. actualCount .. " items (plants+seeds)")
+                        
                         -- Check if row has space (less than 5 plants)
                         if actualCount < AutoPlace.MaxPlantsPerRow then
                             selectedSpot = spot
                             -- Mark this CFrame as used
                             AutoPlace.UsedCFrames[cframeKey] = true
+                            print("[AutoPlace] ✅ Placing in row " .. spot.RowName .. " (" .. actualCount .. "/5)")
                             break
                         else
-                            print("[AutoPlace] Row " .. spot.RowName .. " is full (" .. actualCount .. "/5), skipping...")
+                            print("[AutoPlace] ❌ Row " .. spot.RowName .. " is full (" .. actualCount .. "/5), skipping...")
                         end
                     end
                 end
