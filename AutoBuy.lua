@@ -148,17 +148,12 @@ end
 
 -- Buy a seed!
 function AutoBuy.PurchaseSeed(seedName)
-    print("🔄 [AutoBuy] Attempting to buy:", seedName)
-    
     local success, err = pcall(function()
         local args = {
             [1] = seedName,
             [2] = true
         }
-        
-        print("  → Firing BuyItem remote with:", args[1], args[2])
         AutoBuy.References.BuyItemRemote:FireServer(unpack(args))
-        print("  → Remote fired successfully")
     end)
     
     if success then
@@ -253,6 +248,9 @@ function AutoBuy.ProcessCycle()
                     if success then
                         boughtAnything = true
                         
+                        -- CRITICAL: Wait for server to process before buying next seed
+                        task.wait(0.1)
+                        
                         -- Update last money after purchase
                         AutoBuy.LastMoney = AutoBuy.GetMoney()
                         
@@ -280,7 +278,7 @@ function AutoBuy.BuyUntilDone()
             
             if boughtAnything then
                 totalPurchases = totalPurchases + 1
-                task.wait(0.05)  -- Delay between purchases (non-blocking)
+                task.wait(0.1)  -- Delay between purchases (prevent rate limit)
             else
                 -- Nothing bought, stop loop
                 break
