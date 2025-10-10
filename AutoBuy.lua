@@ -99,11 +99,32 @@ end
 
 -- Read all information about a seed
 function AutoBuy.GetSeedInfo(seedInstance)
+    local seedName = seedInstance.Name
+    local stock = 0
+    
+    -- Try to get stock from UI (more reliable, updates immediately)
+    local success = pcall(function()
+        local seedUI = AutoBuy.References.LocalPlayer.PlayerGui.Main.Seeds.Frame.ScrollingFrame:FindFirstChild(seedName)
+        if seedUI and seedUI:FindFirstChild("Stock") then
+            local stockText = seedUI.Stock.Text
+            -- Extract number from "x3 in stock" or similar format
+            local stockNum = tonumber(stockText:match("%d+"))
+            if stockNum then
+                stock = stockNum
+            end
+        end
+    end)
+    
+    -- Fallback to attribute if UI reading fails
+    if not success or stock == 0 then
+        stock = seedInstance:GetAttribute("Stock") or 0
+    end
+    
     return {
-        Name = seedInstance.Name,
+        Name = seedName,
         Plant = seedInstance:GetAttribute("Plant") or "Unknown",
         Price = seedInstance:GetAttribute("Price") or 0,
-        Stock = seedInstance:GetAttribute("Stock") or 0,
+        Stock = stock,
         Hidden = seedInstance:GetAttribute("Hidden") or false
     }
 end
