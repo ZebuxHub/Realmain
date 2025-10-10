@@ -121,14 +121,16 @@ function Platform.GetAllPlatforms()
     
     local platforms = {}
     
-    -- Scan all children for platforms with PlatformPrice
+    -- Scan all platform models (with or without PlatformPrice)
     for _, child in ipairs(brainrots:GetChildren()) do
-        if child:IsA("Model") then
+        if child:IsA("Model") and tonumber(child.Name) then
+            local platformNum = child.Name
             local platformPrice = child:FindFirstChild("PlatformPrice")
+            local priceValue = 0
+            
+            -- Get price from PlatformPrice if it exists (locked platforms)
             if platformPrice then
-                local platformNum = child.Name
                 local moneyModel = platformPrice:FindFirstChild("Money")
-                local priceValue = 0
                 
                 -- Get price from Money TextLabel (formatted as "$1,000")
                 if moneyModel and moneyModel:IsA("TextLabel") then
@@ -137,18 +139,19 @@ function Platform.GetAllPlatforms()
                     local cleanPrice = priceText:gsub("[$,]", "")
                     priceValue = tonumber(cleanPrice) or 0
                 end
-                
-                -- Get rebirth requirement from platform attributes
-                local rebirthReq = child:GetAttribute("Rebirth") or 0
-                
-                table.insert(platforms, {
-                    Number = platformNum,
-                    Model = child,
-                    Price = priceValue,
-                    RebirthRequired = rebirthReq,
-                    Enabled = child:GetAttribute("Enabled") or false
-                })
             end
+            
+            -- Get rebirth requirement from platform attributes
+            local rebirthReq = child:GetAttribute("Rebirth") or 0
+            local isEnabled = child:GetAttribute("Enabled") or false
+            
+            table.insert(platforms, {
+                Number = platformNum,
+                Model = child,
+                Price = priceValue,
+                RebirthRequired = rebirthReq,
+                Enabled = isEnabled
+            })
         end
     end
     
