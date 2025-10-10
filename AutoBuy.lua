@@ -184,6 +184,20 @@ function AutoBuy.Start()
     AutoBuy.TotalPurchases = 0
     print("🚀 [AutoBuy] System STARTED")
     
+    -- Immediate initial purchase cycle (before event-driven system takes over)
+    task.spawn(function()
+        task.wait(0.05)  -- Minimal delay for system to initialize
+        if AutoBuy.IsRunning and AutoBuy.Settings.AutoBuyEnabled then
+            print("💰 [AutoBuy] Running initial purchase cycle...")
+            local success, purchasesMade = AutoBuy.ProcessCycle()
+            if purchasesMade and purchasesMade > 0 then
+                print("✅ [AutoBuy] Initial purchase: Bought " .. FormatNumber(purchasesMade) .. " seeds")
+            else
+                print("ℹ️ [AutoBuy] No purchases made (insufficient funds or no matching seeds)")
+            end
+        end
+    end)
+    
     return true
 end
 
@@ -243,9 +257,6 @@ function AutoBuy.ProcessCycle()
                             AutoBuy.Brain.UpdateMoney()
                             AutoBuy.Brain.UpdateSeedInfo()
                         end
-                        
-                        -- Small delay between purchases
-                        task.wait(0.1)
                     end
                 end
             end
