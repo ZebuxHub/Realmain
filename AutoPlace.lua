@@ -45,6 +45,9 @@ local AutoPlace = {
     ChildAddedConnections = {},
     PlotAttributeConnections = {},
     
+    -- Task Management (for spam toggle prevention)
+    InitializationTask = nil,
+    
     -- Dependencies (Set by Main.lua)
     Services = nil,
     References = nil,
@@ -744,17 +747,20 @@ function AutoPlace.Start()
     -- Setup plot monitoring FIRST (real-time CFrame tracking)
     AutoPlace.SetupPlotMonitoring()
     
-    -- Initial scan
-    task.spawn(function()
-        AutoPlace.FindAvailableSpots(true)
-    end)
-    
-    -- Setup event system
+    -- Setup event system IMMEDIATELY (catch new plants)
     AutoPlace.SetupEventListeners()
     
-    -- Process existing plants
-    task.spawn(function()
-        task.wait(0.1)  -- Minimal delay for setup to complete
+    -- Initial scan and process existing plants
+    AutoPlace.InitializationTask = task.spawn(function()
+        -- Check if still running (spam toggle protection)
+        if not AutoPlace.IsRunning then return end
+        
+        AutoPlace.FindAvailableSpots(true)
+        
+        if not AutoPlace.IsRunning then return end
+        task.wait(0.05)  -- Minimal delay for scan to complete
+        
+        if not AutoPlace.IsRunning then return end
         AutoPlace.ProcessAllPlants()
     end)
 end
@@ -765,6 +771,12 @@ function AutoPlace.Stop()
     end
     
     AutoPlace.IsRunning = false
+    
+    -- Cancel initialization task if still running
+    if AutoPlace.InitializationTask then
+        task.cancel(AutoPlace.InitializationTask)
+        AutoPlace.InitializationTask = nil
+    end
     
     if AutoPlace.BackpackConnection then
         AutoPlace.BackpackConnection:Disconnect()
