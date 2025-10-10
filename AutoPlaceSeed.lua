@@ -11,7 +11,7 @@
 ]]
 
 local AutoPlaceSeed = {
-    Version = "1.0.0",
+    Version = "2.0.0",
     
     -- State
     IsRunning = false,
@@ -22,12 +22,16 @@ local AutoPlaceSeed = {
     CachedSpots = {},
     SpotsCacheValid = false,
     
-    -- Row Tracking (5 seeds per row max)
-    RowSeedCounts = {},
+    -- OPTIMIZED: Row Count Cache (O(1) lookup instead of O(n) scan)
+    RowCounts = {},  -- {["1"] = 3, ["2"] = 5, ...} - Instant count!
+    FullRows = {},   -- {["2"] = true, ["5"] = true} - Skip full rows instantly
     MaxSeedsPerRow = 5,
     
     -- Used CFrames (prevent placing in same spot twice)
     UsedCFrames = {},
+    
+    -- OPTIMIZED: Available Seeds Cache (O(1) check instead of scanning backpack)
+    AvailableSeeds = {},  -- {[tool] = true} - Track what's available
     
     -- Optimized: Selected seeds as a set for O(1) lookup
     SelectedSeedsSet = {},
@@ -35,6 +39,10 @@ local AutoPlaceSeed = {
     -- Event Connections
     BackpackConnection = nil,
     PlotAttributeConnections = {},
+    
+    -- OPTIMIZED: Event Debouncing (prevent spam processing)
+    LastEventTime = 0,
+    EventDebounceInterval = 0.15,  -- Minimum time between event triggers
     
     -- Task Management (spam toggle prevention with zero-cost generation)
     StartGeneration = 0,  -- Increment on each Start(), tasks check if they're outdated
@@ -108,9 +116,51 @@ function AutoPlaceSeed.GetOwnedPlot()
 end
 
 -- Count items in a row (plants from Plots + seeds from Countdowns)
-function AutoPlaceSeed.CountItemsInRow(rowName)
+--[[
+    ========================================
+    OPTIMIZED: Row Count Management
+    ========================================
+    Instead of scanning ALL items every time (O(n)),
+    we cache counts and update them when events fire (O(1))!
+--]]
+
+-- Update row count cache and full row status
+function AutoPlaceSeed.UpdateRowCount(rowName, delta)
+    rowName = tostring(rowName)
+    
+    -- Initialize if not exists
+    if not AutoPlaceSeed.RowCounts[rowName] then
+        AutoPlaceSeed.RowCounts[rowName] = 0
+    end
+    
+    -- Update count
+    AutoPlaceSeed.RowCounts[rowName] = math.max(0, AutoPlaceSeed.RowCounts[rowName] + delta)
+    
+    -- Update full row status
+    if AutoPlaceSeed.RowCounts[rowName] >= AutoPlaceSeed.MaxSeedsPerRow then
+        AutoPlaceSeed.FullRows[rowName] = true
+    else
+        AutoPlaceSeed.FullRows[rowName] = nil
+    end
+end
+
+-- Get row count (from cache, O(1) instant!)
+function AutoPlaceSeed.GetRowCount(rowName)
+    return AutoPlaceSeed.RowCounts[tostring(rowName)] or 0
+end
+
+-- Check if row is full (from cache, O(1) instant!)
+function AutoPlaceSeed.IsRowFull(rowName)
+    return AutoPlaceSeed.FullRows[tostring(rowName)] == true
+end
+
+-- Initialize row counts from actual game state (only called on Start)
+function AutoPlaceSeed.InitializeRowCounts()
+    AutoPlaceSeed.RowCounts = {}
+    AutoPlaceSeed.FullRows = {}
+    
     local plotNum = AutoPlaceSeed.GetOwnedPlot()
-    if not plotNum then return 0 end
+    if not plotNum then return end
     
     local totalCount = 0
     
@@ -121,8 +171,9 @@ function AutoPlaceSeed.CountItemsInRow(rowName)
             local plants = plot:FindFirstChild("Plants")
             if plants then
                 for _, plant in ipairs(plants:GetChildren()) do
-                    local plantRow = plant:GetAttribute("Row")
-                    if plantRow and tostring(plantRow) == tostring(rowName) then
+                    local rowNum = plant:GetAttribute("Row")
+                    if rowNum then
+                        AutoPlaceSeed.UpdateRowCount(rowNum, 1)
                         totalCount = totalCount + 1
                     end
                 end
@@ -137,8 +188,9 @@ function AutoPlaceSeed.CountItemsInRow(rowName)
             local countdowns = scriptedMap:FindFirstChild("Countdowns")
             if countdowns then
                 for _, seed in ipairs(countdowns:GetChildren()) do
-                    local seedRow = seed:GetAttribute("Row")
-                    if seedRow and tostring(seedRow) == tostring(rowName) then
+                    local rowNum = seed:GetAttribute("Row")
+                    if rowNum then
+                        AutoPlaceSeed.UpdateRowCount(rowNum, 1)
                         totalCount = totalCount + 1
                     end
                 end
@@ -146,14 +198,14 @@ function AutoPlaceSeed.CountItemsInRow(rowName)
         end
     end)
     
-    return totalCount
+    print("[AutoPlaceSeed] 📊 Initialized row counts: " .. totalCount .. " items total")
 end
 
 -- Invalidate spots cache
 function AutoPlaceSeed.InvalidateCache()
     AutoPlaceSeed.SpotsCacheValid = false
-    AutoPlaceSeed.RowSeedCounts = {}
-    -- DON'T clear UsedCFrames here - items are still physically placed!
+    -- DON'T clear RowCounts - they're updated by events!
+    -- DON'T clear UsedCFrames - items are still physically placed!
 end
 
 -- Find all available spots in player's plot (with caching and row limits)
@@ -184,11 +236,8 @@ function AutoPlaceSeed.FindAvailableSpots(forceRescan)
         end)
         
         for _, row in ipairs(rowsList) do
-            -- OPTIMIZED: Read Plants attribute directly (game's official count)
-            local plantsInRow = row:GetAttribute("Plants") or 0
-            
-            -- Skip full rows immediately
-            if plantsInRow < AutoPlaceSeed.MaxSeedsPerRow then
+            -- SUPER OPTIMIZED: Skip full rows instantly with cached status!
+            if not AutoPlaceSeed.IsRowFull(row.Name) then
                 local grass = row:FindFirstChild("Grass")
                 if grass then
                     for _, spot in ipairs(grass:GetChildren()) do
@@ -203,9 +252,6 @@ function AutoPlaceSeed.FindAvailableSpots(forceRescan)
                             })
                         end
                     end
-                    
-                    -- Update row count cache from attribute
-                    AutoPlaceSeed.RowSeedCounts[row.Name] = plantsInRow
                 end
             end
         end
@@ -313,10 +359,8 @@ function AutoPlaceSeed.PlaceSeed(seedInfo, spot)
     if success then
         AutoPlaceSeed.TotalPlacements = AutoPlaceSeed.TotalPlacements + 1
         
-        -- Update row seed count
-        if AutoPlaceSeed.RowSeedCounts[spot.RowName] then
-            AutoPlaceSeed.RowSeedCounts[spot.RowName] = AutoPlaceSeed.RowSeedCounts[spot.RowName] + 1
-        end
+        -- OPTIMIZED: Update cached row count immediately
+        AutoPlaceSeed.UpdateRowCount(spot.RowName, 1)
     end
     
     return success
@@ -356,32 +400,22 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
         return false
     end
     
-    -- Pick first available spot and verify row isn't full
+    -- OPTIMIZED: Pick first available spot using cached counts (O(1) instead of O(n)!)
     local selectedSpot = nil
-    local plotNum = AutoPlaceSeed.GetOwnedPlot()
     
-    if plotNum then
-        local plot = workspace.Plots:FindFirstChild(plotNum)
-        if plot and plot:FindFirstChild("Rows") then
-            for _, spot in ipairs(spots) do
-                -- CRITICAL: Check if this CFrame position is already used
-                local cframeKey = tostring(spot.Floor.CFrame.Position)
-                
-                if not AutoPlaceSeed.UsedCFrames[cframeKey] then
-                    -- Count actual items in this row (plants + seeds)
-                    local itemCount = AutoPlaceSeed.CountItemsInRow(spot.RowName)
-                    
-                    -- Check if row has space (less than 5 items)
-                    if itemCount < AutoPlaceSeed.MaxSeedsPerRow then
-                        selectedSpot = spot
-                        -- Mark this CFrame as used
-                        AutoPlaceSeed.UsedCFrames[cframeKey] = true
-                        print("[AutoPlaceSeed] ✅ Row " .. spot.RowName .. " has " .. itemCount .. "/5 → Placing")
-                        break
-                    else
-                        print("[AutoPlaceSeed] ❌ Row " .. spot.RowName .. " is FULL (" .. itemCount .. "/5) → Next row")
-                    end
-                end
+    for _, spot in ipairs(spots) do
+        -- Check if this CFrame position is already used
+        local cframeKey = tostring(spot.Floor.CFrame.Position)
+        
+        if not AutoPlaceSeed.UsedCFrames[cframeKey] then
+            -- SUPER FAST: O(1) cached count lookup instead of O(n) scan!
+            if not AutoPlaceSeed.IsRowFull(spot.RowName) then
+                local itemCount = AutoPlaceSeed.GetRowCount(spot.RowName)
+                selectedSpot = spot
+                -- Mark this CFrame as used
+                AutoPlaceSeed.UsedCFrames[cframeKey] = true
+                print("[AutoPlaceSeed] ✅ Row " .. spot.RowName .. " has " .. itemCount .. "/5 → Placing")
+                break
             end
         end
     end
@@ -559,12 +593,8 @@ function AutoPlaceSeed.SetupPlotMonitoring()
                                 local cframeKey = tostring(spot.CFrame.Position)
                                 AutoPlaceSeed.UsedCFrames[cframeKey] = true
                                 
-                                -- Update row count
-                                if AutoPlaceSeed.RowSeedCounts[row.Name] then
-                                    AutoPlaceSeed.RowSeedCounts[row.Name] = AutoPlaceSeed.RowSeedCounts[row.Name] + 1
-                                else
-                                    AutoPlaceSeed.RowSeedCounts[row.Name] = AutoPlaceSeed.CountSeedsInRow(row.Name, grass)
-                                end
+                                -- OPTIMIZED: Update cached row count (+1)
+                                AutoPlaceSeed.UpdateRowCount(row.Name, 1)
                             end
                         end)
                         
@@ -586,12 +616,8 @@ function AutoPlaceSeed.SetupPlotMonitoring()
                                     AutoPlaceSeed.UsedCFrames[cframeKey] = nil
                                 end
                                 
-                                -- Update row count
-                                if AutoPlaceSeed.RowSeedCounts[row.Name] then
-                                    AutoPlaceSeed.RowSeedCounts[row.Name] = math.max(0, AutoPlaceSeed.RowSeedCounts[row.Name] - 1)
-                                else
-                                    AutoPlaceSeed.RowSeedCounts[row.Name] = AutoPlaceSeed.CountSeedsInRow(row.Name, grass)
-                                end
+                                -- OPTIMIZED: Update cached row count (-1)
+                                AutoPlaceSeed.UpdateRowCount(row.Name, -1)
                             end
                         end)
                         
@@ -698,12 +724,13 @@ function AutoPlaceSeed.Start()
     -- OPTIMIZED: Build seeds set for fast lookups
     AutoPlaceSeed.RebuildSeedsSet()
     
-    -- SMART: Rebuild UsedCFrames from what's already placed (only on first start)
-    if not next(AutoPlaceSeed.UsedCFrames) then
-        AutoPlaceSeed.RebuildUsedCFrames()
-    end
+    -- OPTIMIZED: Initialize row counts from actual game state
+    AutoPlaceSeed.InitializeRowCounts()
     
-    -- Setup plot monitoring FIRST (real-time CFrame tracking)
+    -- SMART: Rebuild UsedCFrames from what's already placed
+    AutoPlaceSeed.RebuildUsedCFrames()
+    
+    -- Setup plot monitoring FIRST (real-time CFrame tracking & row count updates)
     AutoPlaceSeed.SetupPlotMonitoring()
     
     -- Setup event listener IMMEDIATELY (catch new seeds)
@@ -732,16 +759,34 @@ function AutoPlaceSeed.Start()
                 local scriptedMap = workspace:FindFirstChild("ScriptedMap")
                 local countdowns = scriptedMap and scriptedMap:FindFirstChild("Countdowns")
                 
+                -- OPTIMIZED: Debounced event handler (prevents spam processing)
+                local function TryProcessSeeds(reason)
+                    if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
+                    
+                    -- Debounce: Only process if enough time has passed
+                    task.defer(function()
+                        local now = tick()
+                        if now - AutoPlaceSeed.LastEventTime < AutoPlaceSeed.EventDebounceInterval then
+                            return -- Skip duplicate triggers
+                        end
+                        AutoPlaceSeed.LastEventTime = now
+                        
+                        task.wait(0.05) -- Minimal delay for replication
+                        if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
+                        
+                        AutoPlaceSeed.InvalidateCache()
+                        AutoPlaceSeed.ProcessAllSeeds()
+                    end)
+                end
+                
                 -- When a PLANT is removed, a spot opens up!
                 if plants then
                     local plantRemovedConn = plants.ChildRemoved:Connect(function(removed)
-                        if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
                         local rowNum = removed:GetAttribute("Row")
                         if rowNum then
+                            -- Row count already updated by SetupPlotMonitoring!
                             print("[AutoPlaceSeed] 🔥 Plant removed from row " .. rowNum .. " → Spot available!")
-                            task.wait(0.1) -- Small delay for count to update
-                            AutoPlaceSeed.InvalidateCache()
-                            AutoPlaceSeed.ProcessAllSeeds()
+                            TryProcessSeeds("plant_removed")
                         end
                     end)
                     table.insert(AutoPlaceSeed.PlotAttributeConnections, plantRemovedConn)
@@ -750,13 +795,12 @@ function AutoPlaceSeed.Start()
                 -- When a SEED countdown ends, a spot opens up!
                 if countdowns then
                     local seedRemovedConn = countdowns.ChildRemoved:Connect(function(removed)
-                        if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
                         local rowNum = removed:GetAttribute("Row")
                         if rowNum then
+                            -- Update row count manually (seeds aren't in Floor spots)
+                            AutoPlaceSeed.UpdateRowCount(rowNum, -1)
                             print("[AutoPlaceSeed] 🌱 Seed expired from row " .. rowNum .. " → Spot available!")
-                            task.wait(0.1) -- Small delay for count to update
-                            AutoPlaceSeed.InvalidateCache()
-                            AutoPlaceSeed.ProcessAllSeeds()
+                            TryProcessSeeds("seed_expired")
                         end
                     end)
                     table.insert(AutoPlaceSeed.PlotAttributeConnections, seedRemovedConn)
@@ -792,7 +836,9 @@ function AutoPlaceSeed.Stop()
     
     AutoPlaceSeed.CachedSpots = {}
     AutoPlaceSeed.SpotsCacheValid = false
-    AutoPlaceSeed.RowSeedCounts = {}
+    AutoPlaceSeed.RowCounts = {}
+    AutoPlaceSeed.FullRows = {}
+    AutoPlaceSeed.AvailableSeeds = {}
     -- DON'T clear UsedCFrames - only clear when actually removing items from plot
 end
 
