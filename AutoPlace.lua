@@ -783,29 +783,40 @@ function AutoPlace.Start()
         if AutoPlace.StartGeneration ~= myGeneration then return end
         AutoPlace.ProcessAllPlants()
         
-        -- Keep checking periodically if there are plants and available spots
-        while AutoPlace.IsRunning and AutoPlace.StartGeneration == myGeneration do
-            task.wait(0.3) -- Check every 0.3 seconds (very fast to catch when spots open up!)
-            
-            if AutoPlace.StartGeneration ~= myGeneration then return end
-            
-            -- Check if there are plants in backpack
-            local hasPlants = false
-            for _, item in ipairs(AutoPlace.References.Backpack:GetChildren()) do
-                if item:IsA("Tool") and AutoPlace.IsValidPlantName(item.Name) then
-                    local plantInfo = AutoPlace.GetPlantInfo(item)
-                    if plantInfo and AutoPlace.ShouldPlacePlant(plantInfo) then
-                        hasPlants = true
-                        break
-                    end
+        -- Monitor for changes in the plot (plants/seeds removed = spots available!)
+        local plotNum = AutoPlace.GetOwnedPlot()
+        if plotNum then
+            local plot = workspace.Plots:FindFirstChild(tostring(plotNum))
+            if plot then
+                local plants = plot:FindFirstChild("Plants")
+                local scriptedMap = workspace:FindFirstChild("ScriptedMap")
+                local countdowns = scriptedMap and scriptedMap:FindFirstChild("Countdowns")
+                
+                -- Monitor when plants are REMOVED (creates available spots!)
+                if plants then
+                    local plantRemovedConn = plants.ChildRemoved:Connect(function(removed)
+                        if AutoPlace.StartGeneration ~= myGeneration then return end
+                        print("[AutoPlace] 🔥 Plant removed! Checking for plants to place...")
+                        task.wait(0.1) -- Small delay for server to update counts
+                        AutoPlace.ProcessAllPlants()
+                    end)
+                    table.insert(AutoPlace.PlotAttributeConnections, plantRemovedConn)
+                end
+                
+                -- Monitor when seeds are REMOVED (also frees up spots!)
+                if countdowns then
+                    local seedRemovedConn = countdowns.ChildRemoved:Connect(function(removed)
+                        if AutoPlace.StartGeneration ~= myGeneration then return end
+                        print("[AutoPlace] 🌱 Seed removed! Checking for plants to place...")
+                        task.wait(0.1) -- Small delay for server to update counts
+                        AutoPlace.ProcessAllPlants()
+                    end)
+                    table.insert(AutoPlace.PlotAttributeConnections, seedRemovedConn)
                 end
             end
-            
-            if hasPlants then
-                print("[AutoPlace] 🔄 Retrying placement (plants available)...")
-                AutoPlace.ProcessAllPlants()
-            end
         end
+        
+        print("[AutoPlace] 👀 Now monitoring for changes (event-driven)...")
     end)
 end
 
