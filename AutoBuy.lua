@@ -735,8 +735,8 @@ function AutoBuy.StartMethod2()
     AutoBuy.RestockConnection = player:GetAttributeChangedSignal("NextSeedRestock"):Connect(function()
         local restockValue = player:GetAttribute("NextSeedRestock")
         
-        if restockValue == 10 and AutoBuy.Method2Running then
-            print("💥 [AutoBuy] NextSeedRestock = 10! SPAM BUYING...")
+        if restockValue == 1 and AutoBuy.Method2Running then
+            print("💥 [AutoBuy] NextSeedRestock = 1! SPAM BUYING...")
             
             -- Spam buy seeds repeatedly for 1 second
             local startTime = tick()
