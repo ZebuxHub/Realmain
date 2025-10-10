@@ -600,38 +600,56 @@ function AutoPlace.SetupPlotMonitoring()
         for _, row in ipairs(rows:GetChildren()) do
             local grass = row:FindFirstChild("Grass")
             if grass then
-                local addedConn = grass.ChildAdded:Connect(function(child)
-                    if child:IsA("Model") then
-                        local spot = child.Parent
-                        if spot then
-                            AutoPlace.UpdateSpotInCache(spot, false, row.Name)
-                            -- Update row count
-                            if AutoPlace.RowPlantCounts[row.Name] then
-                                AutoPlace.RowPlantCounts[row.Name] = AutoPlace.RowPlantCounts[row.Name] + 1
-                            else
-                                AutoPlace.RowPlantCounts[row.Name] = AutoPlace.CountPlantsInRow(row.Name, grass)
+                -- Monitor each Floor spot for real-time CFrame tracking
+                for _, spot in ipairs(grass:GetChildren()) do
+                    if spot:IsA("Model") and spot.Name == "Floor" then
+                        -- Track when items added to THIS spot
+                        local addedConn = spot.ChildAdded:Connect(function(child)
+                            if child:IsA("Model") then
+                                -- Mark this CFrame as used IMMEDIATELY
+                                local cframeKey = tostring(spot.CFrame.Position)
+                                AutoPlace.UsedCFrames[cframeKey] = true
+                                
+                                -- Update row count
+                                if AutoPlace.RowPlantCounts[row.Name] then
+                                    AutoPlace.RowPlantCounts[row.Name] = AutoPlace.RowPlantCounts[row.Name] + 1
+                                else
+                                    AutoPlace.RowPlantCounts[row.Name] = AutoPlace.CountPlantsInRow(row.Name, grass)
+                                end
                             end
-                        end
-                    end
-                end)
-                
-                local removedConn = grass.ChildRemoved:Connect(function(child)
-                    if child:IsA("Model") then
-                        local spot = child.Parent
-                        if spot and spot:GetAttribute("CanPlace") == true then
-                            AutoPlace.UpdateSpotInCache(spot, true, row.Name)
-                            -- Update row count
-                            if AutoPlace.RowPlantCounts[row.Name] then
-                                AutoPlace.RowPlantCounts[row.Name] = math.max(0, AutoPlace.RowPlantCounts[row.Name] - 1)
-                            else
-                                AutoPlace.RowPlantCounts[row.Name] = AutoPlace.CountPlantsInRow(row.Name, grass)
+                        end)
+                        
+                        -- Track when items removed from THIS spot
+                        local removedConn = spot.ChildRemoved:Connect(function(child)
+                            if child:IsA("Model") then
+                                -- Check if spot is now completely empty
+                                local isEmpty = true
+                                for _, remaining in ipairs(spot:GetChildren()) do
+                                    if remaining:IsA("Model") then
+                                        isEmpty = false
+                                        break
+                                    end
+                                end
+                                
+                                -- If empty, unmark this CFrame (spot available again!)
+                                if isEmpty then
+                                    local cframeKey = tostring(spot.CFrame.Position)
+                                    AutoPlace.UsedCFrames[cframeKey] = nil
+                                end
+                                
+                                -- Update row count
+                                if AutoPlace.RowPlantCounts[row.Name] then
+                                    AutoPlace.RowPlantCounts[row.Name] = math.max(0, AutoPlace.RowPlantCounts[row.Name] - 1)
+                                else
+                                    AutoPlace.RowPlantCounts[row.Name] = AutoPlace.CountPlantsInRow(row.Name, grass)
+                                end
                             end
-                        end
+                        end)
+                        
+                        table.insert(AutoPlace.PlotAttributeConnections, addedConn)
+                        table.insert(AutoPlace.PlotAttributeConnections, removedConn)
                     end
-                end)
-                
-                table.insert(AutoPlace.PlotAttributeConnections, addedConn)
-                table.insert(AutoPlace.PlotAttributeConnections, removedConn)
+                end
             end
         end
     end)
@@ -718,8 +736,13 @@ function AutoPlace.Start()
     -- OPTIMIZED: Build plants set for fast lookups
     AutoPlace.RebuildPlantsSet()
     
-    -- CRITICAL: Rebuild UsedCFrames from what's already placed
-    AutoPlace.RebuildUsedCFrames()
+    -- SMART: Rebuild UsedCFrames from what's already placed (only on first start)
+    if not next(AutoPlace.UsedCFrames) then
+        AutoPlace.RebuildUsedCFrames()
+    end
+    
+    -- Setup plot monitoring FIRST (real-time CFrame tracking)
+    AutoPlace.SetupPlotMonitoring()
     
     -- Initial scan
     task.spawn(function()
@@ -729,15 +752,9 @@ function AutoPlace.Start()
     -- Setup event system
     AutoPlace.SetupEventListeners()
     
-    -- Setup plot monitoring
-    task.spawn(function()
-        task.wait(0.3)  -- Reduced: Start monitoring faster
-        AutoPlace.SetupPlotMonitoring()
-    end)
-    
     -- Process existing plants
     task.spawn(function()
-        task.wait(0.2)  -- Reduced: Process plants sooner
+        task.wait(0.1)  -- Minimal delay for setup to complete
         AutoPlace.ProcessAllPlants()
     end)
 end
