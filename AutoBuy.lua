@@ -225,17 +225,24 @@ function AutoBuy.ProcessCycle()
     local seedList = AutoBuy.GetAllSeeds()
     local boughtAnything = false
     
-    -- Check each seed (single pass, not loop)
+    -- Check each seed (single pass, try to buy 1 of each)
     for _, seedName in ipairs(seedList) do
+        -- Stop if no longer running
+        if not AutoBuy.IsRunning or not AutoBuy.Settings.AutoBuyEnabled then
+            break
+        end
+        
         -- Check if we should auto-buy this seed
         if AutoBuy.ShouldBuySeed(seedName) then
             local seedInstance = AutoBuy.References.Seeds:FindFirstChild(seedName)
             
             if seedInstance then
+                -- Re-fetch fresh info each time (stock/money might have changed)
                 local seedInfo = AutoBuy.GetSeedInfo(seedInstance)
+                local currentMoney = AutoBuy.GetMoney()
                 
                 -- Check if we can buy it (has money AND stock > 0)
-                if AutoBuy.CanAffordSeed(seedInfo) and seedInfo.Stock > 0 then
+                if currentMoney >= seedInfo.Price and seedInfo.Stock > 0 then
                     local success = AutoBuy.PurchaseSeed(seedName)
                     
                     if success then
