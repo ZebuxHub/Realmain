@@ -6,8 +6,12 @@
     - Auto equip weapon (Leather Grip Bat)
     - Multiple targeting modes (Random, High HP, Low HP)
     - Multiple movement modes (Walk, TP, Tween)
-    - Player-based targeting with AssociatedPlayer attribute
+    - ONLY attacks brainrots in YOUR plot with YOUR UserID
     - Health-based targeting (Current or Max)
+    
+    Security:
+    - Plot filter: workspace.Plots[YourPlot].Brainrots
+    - UserID filter: AssociatedPlayer == LocalPlayer.UserId
 ]]
 
 local AutoAttack = {
@@ -24,7 +28,6 @@ local AutoAttack = {
         TargetMode = "Random",  -- "Random", "HighHP", "LowHP"
         MovementMode = "TP",  -- "TP", "Tween", "Walk"
         HealthMode = "Current",  -- "Current", "Max"
-        TargetPlayerID = nil,  -- If set, only target this player's brainrots
         AttackRange = 15,  -- Distance to target before attacking
         AttackInterval = 0.5,  -- Seconds between attacks
     },
@@ -118,13 +121,16 @@ function AutoAttack.GetPlayerPlot()
     return nil
 end
 
--- Get all available targets from workspace (only in player's plot)
+-- Get all available targets from workspace (only in player's plot AND matching player's UserID)
 function AutoAttack.GetAllTargets()
     local targets = {}
     
     -- Get player's plot number
     local playerPlot = AutoAttack.GetPlayerPlot()
     if not playerPlot then return targets end
+    
+    -- Get player's UserID
+    local playerUserID = AutoAttack.References.LocalPlayer.UserId
     
     pcall(function()
         -- Get brainrots in player's plot
@@ -146,21 +152,9 @@ function AutoAttack.GetAllTargets()
                     continue
                 end
                 
-                -- Filter by player ID if specified (optional targeting)
-                if AutoAttack.Settings.TargetPlayerID then
-                    -- Only target brainrots owned by this specific player
-                    if associatedPlayer == AutoAttack.Settings.TargetPlayerID then
-                        table.insert(targets, {
-                            Model = brainrot,
-                            ID = id,
-                            PlayerID = associatedPlayer,
-                            Health = health,
-                            MaxHealth = maxHealth,
-                            Position = brainrot:GetPivot().Position
-                        })
-                    end
-                else
-                    -- Target ALL brainrots in my plot (any AssociatedPlayer)
+                -- CRITICAL: Only target brainrots where AssociatedPlayer == My UserID
+                -- This ensures we only attack OUR OWN brainrots in OUR plot
+                if associatedPlayer == playerUserID then
                     table.insert(targets, {
                         Model = brainrot,
                         ID = id,
@@ -170,6 +164,7 @@ function AutoAttack.GetAllTargets()
                         Position = brainrot:GetPivot().Position
                     })
                 end
+                -- If AssociatedPlayer doesn't match, skip this brainrot (don't attack)
             end
         end
     end)
