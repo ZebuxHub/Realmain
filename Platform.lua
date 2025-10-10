@@ -86,7 +86,7 @@ end
 -- Get player's current rebirth count
 function Platform.GetRebirth()
     local success, rebirth = pcall(function()
-        return Platform.References.LocalPlayer.leaderstats.Rebirth.Value
+        return Platform.References.LocalPlayer:GetAttribute("Rebirth")
     end)
     return success and rebirth or 0
 end
@@ -264,7 +264,7 @@ function Platform.SetupEventListeners()
     
     local player = Platform.References.LocalPlayer
     
-    -- Listen for money changes
+    -- Listen for money changes (from leaderstats)
     Platform.MoneyConnection = player.leaderstats.Money.Changed:Connect(function(newMoney)
         if Platform.Settings.AutoUnlockEnabled and Platform.IsRunning then
             print("[Platform] Money changed: $" .. FormatNumber(newMoney))
@@ -272,9 +272,10 @@ function Platform.SetupEventListeners()
         end
     end)
     
-    -- Listen for rebirth changes
-    Platform.RebirthConnection = player.leaderstats.Rebirth.Changed:Connect(function(newRebirth)
+    -- Listen for rebirth changes (from Attributes)
+    Platform.RebirthConnection = player:GetAttributeChangedSignal("Rebirth"):Connect(function()
         if Platform.Settings.AutoUnlockEnabled and Platform.IsRunning then
+            local newRebirth = Platform.GetRebirth()
             print("[Platform] Rebirth changed: " .. newRebirth)
             Platform.TryUnlockNext()
         end
