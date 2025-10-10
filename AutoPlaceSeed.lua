@@ -657,17 +657,13 @@ function AutoPlaceSeed.Start()
     -- Setup plot monitoring FIRST (real-time CFrame tracking)
     AutoPlaceSeed.SetupPlotMonitoring()
     
-    -- Initial scan
-    task.spawn(function()
-        AutoPlaceSeed.FindAvailableSpots(true)
-    end)
-    
-    -- Setup backpack event listener
+    -- Setup event listener IMMEDIATELY (catch new seeds)
     AutoPlaceSeed.SetupEventListeners()
     
-    -- Process existing seeds
+    -- Initial scan and process existing seeds
     task.spawn(function()
-        task.wait(0.1)  -- Minimal delay for setup to complete
+        AutoPlaceSeed.FindAvailableSpots(true)
+        task.wait(0.05)  -- Minimal delay for scan to complete
         AutoPlaceSeed.ProcessAllSeeds()
     end)
 end
