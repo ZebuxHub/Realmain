@@ -445,14 +445,17 @@ end
     ========================================
 --]]
 
--- Get all gears
+-- Get all gears from UI
 function AutoBuy.GetAllGears()
     local gearList = {}
     
-    -- Gears are Tools inside the Gears folder
-    for _, gearInstance in ipairs(AutoBuy.References.Gears:GetChildren()) do
-        if gearInstance:IsA("Tool") then
-            table.insert(gearList, gearInstance.Name)
+    local player = game:GetService("Players").LocalPlayer
+    local gearScrollingFrame = player.PlayerGui:WaitForChild("Main"):WaitForChild("Gears"):WaitForChild("Frame"):WaitForChild("ScrollingFrame")
+    
+    -- Get all Frame children (exclude Padding and other UI elements)
+    for _, child in ipairs(gearScrollingFrame:GetChildren()) do
+        if child:IsA("Frame") then
+            table.insert(gearList, child.Name)
         end
     end
     
@@ -478,12 +481,32 @@ function AutoBuy.GetGearStock(gearName)
     return stock
 end
 
--- Get gear price
+-- Get gear price from UI or ReplicatedStorage
 function AutoBuy.GetGearPrice(gearName)
+    -- Try to get from UI first
+    local player = game:GetService("Players").LocalPlayer
+    local success, gearFrame = pcall(function()
+        return player.PlayerGui.Main.Gears.Frame.ScrollingFrame:FindFirstChild(gearName)
+    end)
+    
+    if success and gearFrame then
+        local priceLabel = gearFrame:FindFirstChild("Price")
+        if priceLabel and priceLabel.Text then
+            -- Extract number from price text (e.g., "$1000" -> 1000)
+            local priceStr = priceLabel.Text:gsub("[^%d]", "")
+            local price = tonumber(priceStr)
+            if price then
+                return price
+            end
+        end
+    end
+    
+    -- Fallback to ReplicatedStorage
     local gearInstance = AutoBuy.References.Gears:FindFirstChild(gearName)
     if gearInstance then
         return gearInstance:GetAttribute("Price") or 0
     end
+    
     return 0
 end
 
