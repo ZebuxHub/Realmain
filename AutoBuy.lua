@@ -148,12 +148,17 @@ end
 
 -- Buy a seed!
 function AutoBuy.PurchaseSeed(seedName)
+    print("🔄 [AutoBuy] Attempting to buy:", seedName)
+    
     local success, err = pcall(function()
         local args = {
             [1] = seedName,
             [2] = true
         }
+        
+        print("  → Firing BuyItem remote with:", args[1], args[2])
         AutoBuy.References.BuyItemRemote:FireServer(unpack(args))
+        print("  → Remote fired successfully")
     end)
     
     if success then
