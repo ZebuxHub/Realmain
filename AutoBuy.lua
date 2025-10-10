@@ -103,29 +103,47 @@ function AutoBuy.GetSeedInfo(seedInstance)
     local seedName = seedInstance.Name
     local stock = 0
     
-    -- Try to get stock from UI (more reliable, updates immediately)
-    local success = pcall(function()
-        local seedUI = AutoBuy.References.LocalPlayer.PlayerGui.Main.Seeds.Frame.ScrollingFrame:FindFirstChild(seedName)
-        if seedUI and seedUI:FindFirstChild("Stock") then
-            local stockText = seedUI.Stock.Text
-            -- Extract number from "x3 in stock" or similar format
-            local stockNum = tonumber(stockText:match("%d+"))
-            if stockNum then
-                stock = stockNum
+    -- Read stock from UI Frame only (real-time, most accurate)
+    local success, err = pcall(function()
+        local player = AutoBuy.References.LocalPlayer
+        if not player or not player.PlayerGui then return end
+        
+        local mainGui = player.PlayerGui:FindFirstChild("Main")
+        if not mainGui then return end
+        
+        local seedsFrame = mainGui:FindFirstChild("Seeds")
+        if not seedsFrame then return end
+        
+        local frame = seedsFrame:FindFirstChild("Frame")
+        if not frame then return end
+        
+        local scrollingFrame = frame:FindFirstChild("ScrollingFrame")
+        if not scrollingFrame then return end
+        
+        -- Find the seed's UI Frame
+        local seedUI = scrollingFrame:FindFirstChild(seedName)
+        if seedUI and seedUI:IsA("Frame") then
+            local stockLabel = seedUI:FindFirstChild("Stock")
+            if stockLabel and stockLabel:IsA("TextLabel") then
+                local stockText = stockLabel.Text
+                -- Extract number from "x5 in stock" or "4" or any format
+                local stockNum = tonumber(stockText:match("%d+"))
+                if stockNum then
+                    stock = stockNum
+                end
             end
         end
     end)
     
-    -- Fallback to attribute if UI reading fails
-    if not success or stock == 0 then
-        stock = seedInstance:GetAttribute("Stock") or 0
+    if not success and err then
+        warn("[AutoBuy] Failed to read stock for " .. seedName .. ": " .. tostring(err))
     end
     
     return {
         Name = seedName,
         Plant = seedInstance:GetAttribute("Plant") or "Unknown",
         Price = seedInstance:GetAttribute("Price") or 0,
-        Stock = stock,
+        Stock = stock,  -- Always from UI Frame only
         Hidden = seedInstance:GetAttribute("Hidden") or false
     }
 end
@@ -279,7 +297,6 @@ function AutoBuy.ProcessCycle()
                         -- 🧠 Brain: Update UI immediately after purchase
                         if AutoBuy.Brain then
                             AutoBuy.Brain.UpdateMoney()
-                            AutoBuy.Brain.UpdateSeedInfo()
                         end
                     end
                 end
@@ -509,7 +526,7 @@ function AutoBuy.GetAllGears()
     
     -- Get all Frame children (exclude Padding and other UI elements)
     for _, child in ipairs(gearScrollingFrame:GetChildren()) do
-        if child:IsA("Frame") then
+        if child:IsA("Frame") and child.Name ~= "Padding" then
             table.insert(gearList, child.Name)
         end
     end
