@@ -263,6 +263,9 @@ function AutoBuy.ProcessCycle()
                                 AutoBuy.Brain.UpdateMoney()
                                 AutoBuy.Brain.UpdateSeedInfo()
                             end
+                            
+                            -- CRITICAL: Yield to prevent freezing (one-by-one purchases)
+                            task.wait(0.05)
                         end
                     end
                 end
