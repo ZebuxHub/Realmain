@@ -1,92 +1,52 @@
 --[[
-    ========================================
-    🌱 AutoPlace Module - Plant Vs Brainrot
-    ========================================
+    🌱 Plant Vs Brainrot - Platform Module
+    This module handles automatic platform unlocking logic
     
-    Purpose: Automatically place plants from backpack to available plots
-    Architecture: Event-driven + polling hybrid for efficiency
-    
-    Author: AI Assistant
-    Version: 1.0.0
-]]
+    The Main script is the Brain 🧠 that controls this module!
+--]]
 
-local AutoPlace = {
-    Version = "1.0.0",
-    
-    -- State
-    IsRunning = false,
-    TotalPlacements = 0,
-    IsProcessing = false,
-    
-    -- Cached Spots
-    CachedSpots = {},
-    SpotsCacheValid = false,
-    
-    -- Row Tracking (5 plant/seed limit per row)
-    RowPlantCounts = {},  -- {["1"] = 3, ["2"] = 5, ...}
-    MaxPlantsPerRow = 5,
-    
-    -- Used CFrames (prevent placing in same spot twice)
-    UsedCFrames = {},
-    
-    -- Plant Data Cache (avoid repeated ReplicatedStorage reads)
-    PlantDataCache = nil,
-    PlantNamesList = {},
-    
-    -- OPTIMIZED: Selected plants as a set for O(1) lookup
-    SelectedPlantsSet = {},
-    
-    -- Auto Pick Up State
-    TotalPickUps = 0,
-    PlantMonitorConnections = {},
-    
-    -- Event Connections
-    BackpackConnection = nil,
-    ChildAddedConnections = {},
-    PlotAttributeConnections = {},
-    
-    -- Task Management (spam toggle prevention with zero-cost generation)
-    StartGeneration = 0,  -- Increment on each Start(), tasks check if they're outdated
-    
-    -- Dependencies (Set by Main.lua)
-    Services = nil,
-    References = nil,
-    Settings = nil,
-    Brain = nil
-}
+local Platform = {}
 
 --[[
     ========================================
-    Initialization
+    Module Configuration
     ========================================
 --]]
 
--- Rebuild selected plants set for O(1) lookup
-function AutoPlace.RebuildPlantsSet()
-    AutoPlace.SelectedPlantsSet = {}
-    
-    if not AutoPlace.Settings then
-        return
-    end
-    
-    local selectedPlants = AutoPlace.Settings.SelectedPlants
-    if selectedPlants and type(selectedPlants) == "table" then
-        for _, plantName in ipairs(selectedPlants) do
-            if plantName and type(plantName) == "string" then
-                AutoPlace.SelectedPlantsSet[plantName] = true
-            end
-        end
-    end
-end
+Platform.Version = "1.0.0"
 
-function AutoPlace.Init(services, references, settings, brain)
-    AutoPlace.Services = services
-    AutoPlace.References = references
-    AutoPlace.Settings = settings
-    AutoPlace.Brain = brain
-    
-    return true
-end
+--[[
+    ========================================
+    Dependencies (Set by Main)
+    ========================================
+--]]
+
+Platform.Services = {
+    Players = nil,
+    ReplicatedStorage = nil,
+    Workspace = nil
+}
+
+Platform.References = {
+    LocalPlayer = nil
+}
+
+Platform.Brain = nil
+
+--[[
+    ========================================
+    Settings & State
+    ========================================
+--]]
+
+Platform.Settings = {
+    AutoUnlockEnabled = false
+}
+
+Platform.IsRunning = false
+Platform.UnlockedPlatforms = {}  -- Track already unlocked platforms
+Platform.MoneyConnection = nil
+Platform.RebirthConnection = nil
 
 --[[
     ========================================
@@ -109,826 +69,334 @@ local function FormatNumber(num)
     end
 end
 
--- Get player's owned plot number
-function AutoPlace.GetOwnedPlot()
-    local success, plotNum = pcall(function()
-        return AutoPlace.References.LocalPlayer:GetAttribute("Plot")
+--[[
+    ========================================
+    Core Functions
+    ========================================
+--]]
+
+-- Get player's current money
+function Platform.GetMoney()
+    local success, money = pcall(function()
+        return Platform.References.LocalPlayer.leaderstats.Money.Value
     end)
-    
-    if success and plotNum then
-        return tostring(plotNum)
-    end
-    
-    return nil
+    return success and money or 0
 end
 
--- Get all plant names from ReplicatedStorage (cached)
-function AutoPlace.GetAllPlants()
-    if AutoPlace.PlantDataCache then
-        return AutoPlace.PlantDataCache
+-- Get player's current rebirth count
+function Platform.GetRebirth()
+    local success, rebirth = pcall(function()
+        return Platform.References.LocalPlayer:GetAttribute("Rebirth")
+    end)
+    return success and rebirth or 0
+end
+
+-- Get player's plot number
+function Platform.GetPlayerPlot()
+    local success, plotNum = pcall(function()
+        return Platform.References.LocalPlayer:GetAttribute("Plot")
+    end)
+    return success and plotNum or nil
+end
+
+-- Get all platforms in player's plot
+function Platform.GetAllPlatforms()
+    local plotNum = Platform.GetPlayerPlot()
+    if not plotNum then
+        warn("[Platform] Player has no plot!")
+        return {}
     end
     
-    local plants = {}
+    local plot = Platform.Services.Workspace.Plots:FindFirstChild(tostring(plotNum))
+    if not plot then
+        warn("[Platform] Plot not found: " .. plotNum)
+        return {}
+    end
     
-    pcall(function()
-        for _, plant in ipairs(AutoPlace.References.Plants:GetChildren()) do
-            table.insert(plants, {
-                Name = plant.Name,
-                Damage = plant:GetAttribute("Damage") or 0
+    local brainrots = plot:FindFirstChild("Brainrots")
+    if not brainrots then
+        warn("[Platform] No Brainrots folder in plot!")
+        return {}
+    end
+    
+    local platforms = {}
+    
+    -- Scan all platform models (with or without PlatformPrice)
+    for _, child in ipairs(brainrots:GetChildren()) do
+        if child:IsA("Model") and tonumber(child.Name) then
+            local platformNum = child.Name
+            local platformPrice = child:FindFirstChild("PlatformPrice")
+            local priceValue = 0
+            
+            -- Get price from PlatformPrice if it exists (locked platforms)
+            if platformPrice then
+                local moneyModel = platformPrice:FindFirstChild("Money")
+                
+                -- Get price from Money TextLabel (formatted as "$1,000")
+                if moneyModel and moneyModel:IsA("TextLabel") then
+                    local priceText = moneyModel.Text
+                    -- Remove $ and commas, then convert to number
+                    local cleanPrice = priceText:gsub("[$,]", "")
+                    priceValue = tonumber(cleanPrice) or 0
+                end
+            end
+            
+            -- Get rebirth requirement from platform attributes
+            local rebirthReq = child:GetAttribute("Rebirth") or 0
+            local isEnabled = child:GetAttribute("Enabled") or false
+            
+            table.insert(platforms, {
+                Number = platformNum,
+                Model = child,
+                Price = priceValue,
+                RebirthRequired = rebirthReq,
+                Enabled = isEnabled
             })
         end
+    end
+    
+    -- Sort by platform number (lowest first)
+    table.sort(platforms, function(a, b)
+        return tonumber(a.Number) < tonumber(b.Number)
     end)
     
-    table.sort(plants, function(a, b)
-        return a.Damage > b.Damage
+    return platforms
+end
+
+-- Check if platform is unlocked (enabled)
+function Platform.IsPlatformUnlocked(platformNum)
+    local plotNum = Platform.GetPlayerPlot()
+    if not plotNum then return true end  -- Assume unlocked if no plot
+    
+    local success, enabled = pcall(function()
+        local plot = Platform.Services.Workspace.Plots:FindFirstChild(tostring(plotNum))
+        local platform = plot.Brainrots:FindFirstChild(tostring(platformNum))
+        return platform:GetAttribute("Enabled") or false
     end)
     
-    AutoPlace.PlantDataCache = plants
-    
-    -- Build name list for faster lookup
-    for _, plant in ipairs(plants) do
-        table.insert(AutoPlace.PlantNamesList, plant.Name:lower())
-    end
-    
-    return plants
+    return success and enabled
 end
 
--- Extract plant name from backpack item name (format: "[XX.X kg] PlantName")
-local function ExtractPlantName(itemName)
-    -- Pattern: "[XX.X kg] Name" -> extract "Name"
-    local plantName = itemName:match("%]%s*(.+)$")
-    if plantName then
-        return plantName:match("^%s*(.-)%s*$") -- Trim whitespace
-    end
-    return itemName -- Fallback to full name
-end
-
--- Calculate string similarity (0-1, higher = more similar)
-local function StringSimilarity(str1, str2)
-    str1 = str1:lower()
-    str2 = str2:lower()
-    
-    -- Exact match
-    if str1 == str2 then
-        return 1.0
-    end
-    
-    -- Length check: If difference > 50%, can't be 80% similar
-    local len1, len2 = #str1, #str2
-    if math.abs(len1 - len2) > math.max(len1, len2) * 0.5 then
-        return 0.0
-    end
-    
-    -- Contains check
-    if str1:find(str2, 1, true) or str2:find(str1, 1, true) then
-        return 0.9
-    end
-    
-    -- Character comparison with early exit
-    local matches = 0
-    local minLen = math.min(len1, len2)
-    local maxLen = math.max(len1, len2)
-    
-    for i = 1, minLen do
-        if str1:sub(i, i) == str2:sub(i, i) then
-            matches = matches + 1
-        else
-            -- Early exit: Can't reach 80% threshold
-            local remaining = minLen - i
-            if (matches + remaining) / maxLen < 0.8 then
-                return 0.0
-            end
-        end
-    end
-    
-    return matches / maxLen
-end
-
--- Check if plant name matches any known plant (80% similarity, cached)
-function AutoPlace.IsValidPlantName(itemName)
-    -- CRITICAL: Reject seeds (they end with " Seed")
-    local cleanName = ExtractPlantName(itemName)
-    if #cleanName >= 5 and string.sub(cleanName, -5) == " Seed" then
-        return false  -- This is a seed, not a plant!
-    end
-    
-    -- Ensure cache is built
-    if #AutoPlace.PlantNamesList == 0 then
-        AutoPlace.GetAllPlants()
-    end
-    
-    -- Quick lookup against cached names
-    for _, plantName in ipairs(AutoPlace.PlantNamesList) do
-        if StringSimilarity(cleanName, plantName) >= 0.8 then
-            return true
-        end
-    end
-    
-    return false
-end
-
--- Get plant info from backpack Tool
-function AutoPlace.GetPlantInfo(plantTool)
-    local success, info = pcall(function()
-        local itemName = plantTool.Name
-        local extractedName = ExtractPlantName(itemName)
-        
-        return {
-            Name = extractedName,
-            OriginalName = itemName,
-            ID = plantTool:GetAttribute("ID"),
-            Damage = plantTool:GetAttribute("Damage") or 0
-        }
+-- Unlock a platform
+function Platform.UnlockPlatform(platformNum)
+    local success, err = pcall(function()
+        local args = { [1] = tostring(platformNum) }
+        Platform.Services.ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("BuyPlatform"):FireServer(unpack(args))
     end)
     
-    if success and info.ID then
-        return info
-    end
-    
-    return nil
-end
-
--- Check if plant matches user's filter
-function AutoPlace.ShouldPlacePlant(plantInfo)
-    if not AutoPlace.Settings.AutoPlaceEnabled then
+    if success then
+        print("✅ [Platform] Unlocked platform: " .. platformNum)
+        table.insert(Platform.UnlockedPlatforms, platformNum)
+        return true
+    else
+        warn("[Platform] Failed to unlock platform " .. platformNum .. ": " .. tostring(err))
         return false
     end
+end
+
+-- Check if previous platform is unlocked (backward check)
+function Platform.IsPreviousPlatformUnlocked(currentPlatformNum)
+    local plotNum = Platform.GetPlayerPlot()
+    if not plotNum then return false end
     
-    local damageFilter = AutoPlace.Settings.PlantDamageFilter or 0
+    local previousNum = currentPlatformNum - 1
     
-    -- Check filters
-    local hasPlantFilter = next(AutoPlace.SelectedPlantsSet) ~= nil
-    local hasDamageFilter = damageFilter > 0
-    
-    if hasPlantFilter and hasDamageFilter then
-        -- Both filters: Plant name must match AND damage >= filter
-        local isSelected = AutoPlace.SelectedPlantsSet[plantInfo.Name] == true
-        local meetsMinDamage = plantInfo.Damage >= damageFilter
-        return isSelected and meetsMinDamage
-    elseif hasPlantFilter then
-        -- Only name filter: O(1) set lookup
-        return AutoPlace.SelectedPlantsSet[plantInfo.Name] == true
-    elseif hasDamageFilter then
-        -- Only damage filter: Plant damage >= filter
-        return plantInfo.Damage >= damageFilter
-    else
-        -- No filter: Place all plants
+    -- Platform 1 has no previous platform
+    if previousNum < 1 then
         return true
     end
+    
+    -- Check if previous platform exists and is enabled
+    local success, enabled = pcall(function()
+        local plot = Platform.Services.Workspace.Plots:FindFirstChild(tostring(plotNum))
+        local previousPlatform = plot.Brainrots:FindFirstChild(tostring(previousNum))
+        return previousPlatform and (previousPlatform:GetAttribute("Enabled") or false)
+    end)
+    
+    return success and enabled
 end
 
--- Count plants in a specific row (including stacked items in each spot)
-function AutoPlace.CountPlantsInRow(rowName, grass)
-    local count = 0
-    if grass then
-        -- Each spot (Floor) can have multiple plants stacked
-        for _, spot in ipairs(grass:GetChildren()) do
-            if spot:IsA("Model") and spot.Name == "Floor" then
-                -- Count all models inside this spot (stacked plants)
-                for _, item in ipairs(spot:GetChildren()) do
-                    if item:IsA("Model") then
-                        count = count + 1
-                    end
-                end
-            else
-                -- If it's not a Floor, it might be a direct child plant (old format)
-                if spot:IsA("Model") and spot.Name ~= "Floor" then
-                    count = count + 1
-                end
+-- Try to unlock next available platform
+function Platform.TryUnlockNext()
+    if not Platform.Settings.AutoUnlockEnabled then return end
+    
+    local currentMoney = Platform.GetMoney()
+    local currentRebirth = Platform.GetRebirth()
+    local platforms = Platform.GetAllPlatforms()
+    
+    -- Find first locked platform that meets requirements
+    for _, platform in ipairs(platforms) do
+        local isUnlocked = platform.Enabled
+        local platformNum = tonumber(platform.Number)
+        
+        if not isUnlocked then
+            -- Check if previous platform is unlocked (backward scan)
+            local previousUnlocked = Platform.IsPreviousPlatformUnlocked(platformNum)
+            if not previousUnlocked then
+                print("[Platform] Platform " .. platform.Number .. " locked - previous platform (#" .. (platformNum - 1) .. ") must be unlocked first")
+                break  -- Stop here, must unlock in order
             end
-        end
-    end
-    return count
-end
-
--- Check if row has space for more plants (< 5)
-function AutoPlace.CanPlaceInRow(rowName, grass)
-    local count = AutoPlace.CountPlantsInRow(rowName, grass)
-    return count < AutoPlace.MaxPlantsPerRow
-end
-
--- Invalidate spots cache (call when CanPlace changes)
-function AutoPlace.InvalidateCache()
-    AutoPlace.SpotsCacheValid = false
-    AutoPlace.RowPlantCounts = {}
-    -- DON'T clear UsedCFrames here - items are still physically placed!
-end
-
--- Find all available spots in player's plot (with caching)
-function AutoPlace.FindAvailableSpots(forceRescan)
-    -- Return cached spots if valid and not forcing rescan
-    if AutoPlace.SpotsCacheValid and not forceRescan then
-        return AutoPlace.CachedSpots
-    end
-    
-    local spots = {}
-    local plotNum = AutoPlace.GetOwnedPlot()
-    
-    if not plotNum then
-        return spots
-    end
-    
-    local success = pcall(function()
-        local plot = workspace.Plots:FindFirstChild(plotNum)
-        if not plot then return end
-        
-        local rows = plot:FindFirstChild("Rows")
-        if not rows then return end
-        
-        -- Loop through all rows (sorted by name)
-        local rowsList = rows:GetChildren()
-        table.sort(rowsList, function(a, b)
-            return tonumber(a.Name) < tonumber(b.Name)
-        end)
-        
-        for _, row in ipairs(rowsList) do
-            -- OPTIMIZED: Read Plants attribute directly (game's official count)
-            local plantsInRow = row:GetAttribute("Plants") or 0
             
-            -- Skip full rows immediately
-            if plantsInRow < AutoPlace.MaxPlantsPerRow then
-                local grass = row:FindFirstChild("Grass")
-                if grass then
-                    for _, spot in ipairs(grass:GetChildren()) do
-                        local canPlace = spot:GetAttribute("CanPlace")
-                        if canPlace == true then
-                            table.insert(spots, {
-                                Floor = spot,
-                                CFrame = spot.CFrame,
-                                PivotOffset = spot.PivotOffset,
-                                RowName = row.Name,
-                                SpotName = spot.Name
-                            })
-                        end
-                    end
-                    
-                    -- Update row count cache from attribute
-                    AutoPlace.RowPlantCounts[row.Name] = plantsInRow
-                end
+            -- Check rebirth requirement
+            if currentRebirth < platform.RebirthRequired then
+                print("[Platform] Platform " .. platform.Number .. " requires Rebirth " .. platform.RebirthRequired .. " (Current: " .. currentRebirth .. ")")
+                print("⏸️ [Platform] Waiting for rebirth to increase...")
+                return  -- Stop and wait for rebirth change event
             end
-        end
-    end)
-    
-    -- Cache the results
-    AutoPlace.CachedSpots = spots
-    AutoPlace.SpotsCacheValid = true
-    
-    return spots
-end
-
--- Move plant tool from backpack to character in workspace
-function AutoPlace.MovePlantToCharacter(plantTool)
-    local success = pcall(function()
-        local character = AutoPlace.References.LocalPlayer.Character
-        local backpack = AutoPlace.References.Backpack
-        
-        if not character or not plantTool:IsA("Tool") then
-            return
-        end
-        
-        -- Unequip any currently equipped tools
-        for _, tool in ipairs(character:GetChildren()) do
-            if tool:IsA("Tool") then
-                tool.Parent = backpack
-            end
-        end
-        
-        -- Equip the plant tool
-        plantTool.Parent = character
-    end)
-    
-    return success
-end
-
--- Place plant at specific spot (centered)
-function AutoPlace.PlacePlant(plantInfo, spot)
-    local success = pcall(function()
-        local position = spot.Floor.CFrame.Position
-        local x, y, z = position.X, position.Y, position.Z
-        
-        -- Get rotation from PivotOffset
-        local pivot = spot.PivotOffset
-        local _, _, _, r00, r01, r02, r10, r11, r12, r20, r21, r22 = pivot:GetComponents()
-        
-        if not pivot or pivot == CFrame.new() then
-            r00, r01, r02 = 1, 0, 0
-            r10, r11, r12 = 0, 1, 0
-            r20, r21, r22 = 0, 0, 1
-        end
-        
-        local placementCFrame = CFrame.new(x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22)
-        
-        AutoPlace.References.PlaceItemRemote:FireServer({
-            ["ID"] = plantInfo.ID,
-            ["CFrame"] = placementCFrame,
-            ["Item"] = plantInfo.Name,
-            ["Floor"] = spot.Floor
-        })
-    end)
-    
-    if success then
-        AutoPlace.TotalPlacements = AutoPlace.TotalPlacements + 1
-        
-        -- Update row plant count
-        if AutoPlace.RowPlantCounts[spot.RowName] then
-            AutoPlace.RowPlantCounts[spot.RowName] = AutoPlace.RowPlantCounts[spot.RowName] + 1
-        end
-    end
-    
-    return success
-end
-
--- Process single plant tool from backpack
-function AutoPlace.ProcessPlant(plantTool)
-    -- Wait if already processing (one by one)
-    while AutoPlace.IsProcessing do
-        task.wait(0.1)
-    end
-    
-    AutoPlace.IsProcessing = true
-    
-    if not AutoPlace.IsRunning or not AutoPlace.Settings.AutoPlaceEnabled then
-        AutoPlace.IsProcessing = false
-        return false
-    end
-    
-    -- Validate plant name (80% similarity)
-    local isValid = AutoPlace.IsValidPlantName(plantTool.Name)
-    if not isValid then
-        AutoPlace.IsProcessing = false
-        return false
-    end
-    
-    -- Get plant info
-    local plantInfo = AutoPlace.GetPlantInfo(plantTool)
-    if not plantInfo then
-        AutoPlace.IsProcessing = false
-        return false
-    end
-    
-    -- Check filter
-    if not AutoPlace.ShouldPlacePlant(plantInfo) then
-        AutoPlace.IsProcessing = false
-        return false
-    end
-    
-    -- Find available spots (uses cache)
-    local spots = AutoPlace.FindAvailableSpots()
-    if #spots == 0 then
-        AutoPlace.IsProcessing = false
-        return false
-    end
-    
-    -- Pick first available spot and verify row isn't full
-    local selectedSpot = nil
-    local plotNum = AutoPlace.GetOwnedPlot()
-    
-    if plotNum then
-        local plot = workspace.Plots:FindFirstChild(plotNum)
-        if plot and plot:FindFirstChild("Rows") then
-            for _, spot in ipairs(spots) do
-                -- CRITICAL: Check if this CFrame position is already used
-                local cframeKey = tostring(spot.Floor.CFrame.Position)
+            
+            -- Check money requirement
+            if currentMoney >= platform.Price then
+                print("💰 [Platform] Unlocking platform " .. platform.Number .. " for $" .. FormatNumber(platform.Price))
                 
-                if not AutoPlace.UsedCFrames[cframeKey] then
-                    -- Read "Plants" attribute from Row (game's official count)
-                    local row = plot.Rows:FindFirstChild(spot.RowName)
-                    if row then
-                        local plantsCount = row:GetAttribute("Plants") or 0
+                local success = Platform.UnlockPlatform(platform.Number)
+                
+                if success then
+                    -- Wait for server response
+                    task.wait(0.2)
+                    
+                    -- Check if actually unlocked
+                    if Platform.IsPlatformUnlocked(platform.Number) then
+                        print("✅ [Platform] Platform " .. platform.Number .. " successfully unlocked!")
                         
-                        -- Check if row has space
-                        if plantsCount < AutoPlace.MaxPlantsPerRow then
-                            selectedSpot = spot
-                            -- Mark this CFrame as used
-                            AutoPlace.UsedCFrames[cframeKey] = true
-                            break
+                        -- Update money display
+                        if Platform.Brain then
+                            Platform.Brain.UpdateMoney()
                         end
-                    end
-                end
-            end
-        end
-    end
-    
-    if not selectedSpot then
-        AutoPlace.IsProcessing = false
-        return false
-    end
-    
-    -- Equip plant
-    if not AutoPlace.MovePlantToCharacter(plantTool) then
-        AutoPlace.IsProcessing = false
-        return false
-    end
-    
-    task.wait(0.1)  -- Reduced: Just enough for server sync
-    
-    -- Place plant
-    local placed = AutoPlace.PlacePlant(plantInfo, selectedSpot)
-    
-    if placed then
-        task.wait(0.15)  -- Reduced: Faster placement cycle
-    end
-    
-    AutoPlace.IsProcessing = false
-    return placed
-end
-
--- Process all plants in backpack
-function AutoPlace.ProcessAllPlants()
-    if not AutoPlace.IsRunning or not AutoPlace.Settings.AutoPlaceEnabled then
-        return 0
-    end
-    
-    local placed = 0
-    
-    for _, item in ipairs(AutoPlace.References.Backpack:GetChildren()) do
-        if item:IsA("Tool") then
-            local success = AutoPlace.ProcessPlant(item)
-            if success then
-                placed = placed + 1
-                task.wait(0.2) -- Small delay between placements
-            end
-        end
-    end
-    
-    return placed
-end
-
---[[
-    ========================================
-    Event System (Event-Driven)
-    ========================================
---]]
-
--- Update cache incrementally when a spot becomes available/unavailable
-function AutoPlace.UpdateSpotInCache(spot, isAvailable, rowName)
-    if isAvailable then
-        table.insert(AutoPlace.CachedSpots, {
-            Floor = spot,
-            CFrame = spot.CFrame,
-            PivotOffset = spot.PivotOffset,
-            RowName = rowName,
-            SpotName = spot.Name
-        })
-    else
-        for i, cachedSpot in ipairs(AutoPlace.CachedSpots) do
-            if cachedSpot.Floor == spot then
-                table.remove(AutoPlace.CachedSpots, i)
-                break
-            end
-        end
-    end
-end
-
--- Setup Row-Level Model tracking (efficient monitoring)
-function AutoPlace.SetupPlotMonitoring()
-    -- Disconnect old plot attribute connections
-    for _, conn in ipairs(AutoPlace.PlotAttributeConnections) do
-        conn:Disconnect()
-    end
-    AutoPlace.PlotAttributeConnections = {}
-    
-    local plotNum = AutoPlace.GetOwnedPlot()
-    if not plotNum then
-        return
-    end
-    
-    pcall(function()
-        local plot = workspace.Plots:FindFirstChild(plotNum)
-        if not plot then return end
-        
-        local rows = plot:FindFirstChild("Rows")
-        if not rows then return end
-        
-        for _, row in ipairs(rows:GetChildren()) do
-            local grass = row:FindFirstChild("Grass")
-            if grass then
-                -- Monitor each Floor spot for real-time CFrame tracking
-                for _, spot in ipairs(grass:GetChildren()) do
-                    if spot:IsA("Model") and spot.Name == "Floor" then
-                        -- Track when items added to THIS spot
-                        local addedConn = spot.ChildAdded:Connect(function(child)
-                            if child:IsA("Model") then
-                                -- Mark this CFrame as used IMMEDIATELY
-                                local cframeKey = tostring(spot.CFrame.Position)
-                                AutoPlace.UsedCFrames[cframeKey] = true
-                                
-                                -- Update row count
-                                if AutoPlace.RowPlantCounts[row.Name] then
-                                    AutoPlace.RowPlantCounts[row.Name] = AutoPlace.RowPlantCounts[row.Name] + 1
-                                else
-                                    AutoPlace.RowPlantCounts[row.Name] = AutoPlace.CountPlantsInRow(row.Name, grass)
-                                end
-                            end
-                        end)
                         
-                        -- Track when items removed from THIS spot
-                        local removedConn = spot.ChildRemoved:Connect(function(child)
-                            if child:IsA("Model") then
-                                -- Check if spot is now completely empty
-                                local isEmpty = true
-                                for _, remaining in ipairs(spot:GetChildren()) do
-                                    if remaining:IsA("Model") then
-                                        isEmpty = false
-                                        break
-                                    end
-                                end
-                                
-                                -- If empty, unmark this CFrame (spot available again!)
-                                if isEmpty then
-                                    local cframeKey = tostring(spot.CFrame.Position)
-                                    AutoPlace.UsedCFrames[cframeKey] = nil
-                                end
-                                
-                                -- Update row count
-                                if AutoPlace.RowPlantCounts[row.Name] then
-                                    AutoPlace.RowPlantCounts[row.Name] = math.max(0, AutoPlace.RowPlantCounts[row.Name] - 1)
-                                else
-                                    AutoPlace.RowPlantCounts[row.Name] = AutoPlace.CountPlantsInRow(row.Name, grass)
-                                end
-                            end
-                        end)
-                        
-                        table.insert(AutoPlace.PlotAttributeConnections, addedConn)
-                        table.insert(AutoPlace.PlotAttributeConnections, removedConn)
-                    end
-                end
-            end
-        end
-    end)
-end
-
-function AutoPlace.SetupEventListeners()
-    -- Disconnect old connections
-    if AutoPlace.BackpackConnection then
-        AutoPlace.BackpackConnection:Disconnect()
-        AutoPlace.BackpackConnection = nil
-    end
-    
-    for _, conn in ipairs(AutoPlace.ChildAddedConnections) do
-        conn:Disconnect()
-    end
-    AutoPlace.ChildAddedConnections = {}
-    
-    -- Listen for new items added to backpack
-    AutoPlace.BackpackConnection = AutoPlace.References.Backpack.ChildAdded:Connect(function(item)
-        if not item:IsA("Tool") or not AutoPlace.Settings.AutoPlaceEnabled or not AutoPlace.IsRunning then
-            return
-        end
-        
-        if not AutoPlace.IsValidPlantName(item.Name) then
-            return
-        end
-        
-        task.spawn(function()
-            task.wait(0.05)  -- Minimal delay for item to load
-            AutoPlace.ProcessPlant(item)
-        end)
-    end)
-end
-
---[[
-    ========================================
-    Main Control
-    ========================================
---]]
-
--- Scan plot and rebuild UsedCFrames from actually placed items
-function AutoPlace.RebuildUsedCFrames()
-    AutoPlace.UsedCFrames = {}
-    
-    local plotNum = AutoPlace.GetOwnedPlot()
-    if not plotNum then return end
-    
-    local plot = workspace.Plots:FindFirstChild(plotNum)
-    if not plot or not plot:FindFirstChild("Rows") then return end
-    
-    -- Scan all rows and grass spots
-    for _, row in ipairs(plot.Rows:GetChildren()) do
-        local grass = row:FindFirstChild("Grass")
-        if grass then
-            for _, spot in ipairs(grass:GetChildren()) do
-                if spot:IsA("Model") and spot.Name == "Floor" then
-                    -- Check if this spot has any items placed
-                    local hasItem = false
-                    for _, child in ipairs(spot:GetChildren()) do
-                        if child:IsA("Model") then
-                            hasItem = true
-                            break
-                        end
+                        -- Try next platform immediately
+                        task.wait(0.1)
+                        Platform.TryUnlockNext()
+                    else
+                        warn("⚠️ [Platform] Platform " .. platform.Number .. " unlock failed!")
                     end
                     
-                    -- If spot has item, mark its CFrame as used
-                    if hasItem then
-                        local cframeKey = tostring(spot.CFrame.Position)
-                        AutoPlace.UsedCFrames[cframeKey] = true
-                    end
+                    return  -- Exit after attempting one unlock
+                else
+                    warn("❌ [Platform] Failed to fire unlock remote for platform " .. platform.Number)
+                    return
                 end
+            else
+                print("[Platform] Not enough money for platform " .. platform.Number .. " (Need: $" .. FormatNumber(platform.Price - currentMoney) .. " more)")
+                print("⏸️ [Platform] Waiting for money to increase...")
+                return  -- Stop and wait for money change event
             end
         end
     end
-end
-
-function AutoPlace.Start()
-    if AutoPlace.IsRunning then
-        return
-    end
-    
-    -- Increment generation FIRST (invalidates all old tasks instantly, zero-cost!)
-    AutoPlace.StartGeneration = AutoPlace.StartGeneration + 1
-    local myGeneration = AutoPlace.StartGeneration
-    
-    AutoPlace.IsRunning = true
-    
-    -- OPTIMIZED: Build plants set for fast lookups
-    AutoPlace.RebuildPlantsSet()
-    
-    -- SMART: Rebuild UsedCFrames from what's already placed (only on first start)
-    if not next(AutoPlace.UsedCFrames) then
-        AutoPlace.RebuildUsedCFrames()
-    end
-    
-    -- Setup plot monitoring FIRST (real-time CFrame tracking)
-    AutoPlace.SetupPlotMonitoring()
-    
-    -- Setup event system IMMEDIATELY (catch new plants)
-    AutoPlace.SetupEventListeners()
-    
-    -- Initial scan and process existing plants (with generation check)
-    task.spawn(function()
-        -- OPTIMIZED: Single number check (faster than task.cancel())
-        if AutoPlace.StartGeneration ~= myGeneration then return end
-        
-        AutoPlace.FindAvailableSpots(true)
-        
-        if AutoPlace.StartGeneration ~= myGeneration then return end
-        task.wait(0.05)
-        
-        if AutoPlace.StartGeneration ~= myGeneration then return end
-        AutoPlace.ProcessAllPlants()
-    end)
-end
-
-function AutoPlace.Stop()
-    if not AutoPlace.IsRunning then
-        return
-    end
-    
-    AutoPlace.IsRunning = false
-    
-    -- Increment generation (all old tasks become invalid instantly, no cancellation needed!)
-    AutoPlace.StartGeneration = AutoPlace.StartGeneration + 1
-    
-    if AutoPlace.BackpackConnection then
-        AutoPlace.BackpackConnection:Disconnect()
-        AutoPlace.BackpackConnection = nil
-    end
-    
-    for _, conn in ipairs(AutoPlace.ChildAddedConnections) do
-        conn:Disconnect()
-    end
-    AutoPlace.ChildAddedConnections = {}
-    
-    for _, conn in ipairs(AutoPlace.PlotAttributeConnections) do
-        conn:Disconnect()
-    end
-    AutoPlace.PlotAttributeConnections = {}
-    
-    AutoPlace.CachedSpots = {}
-    AutoPlace.SpotsCacheValid = false
-    AutoPlace.RowPlantCounts = {}
-    -- DON'T clear UsedCFrames - only clear when actually removing items from plot
-end
-
-function AutoPlace.GetStatus()
-    return {
-        IsRunning = AutoPlace.IsRunning,
-        AutoPlaceEnabled = AutoPlace.Settings.AutoPlaceEnabled,
-        TotalPlacements = AutoPlace.TotalPlacements,
-        TotalPickUps = AutoPlace.TotalPickUps,
-        SelectedPlants = AutoPlace.Settings.SelectedPlants or {},
-        DamageFilter = AutoPlace.Settings.PlantDamageFilter or 0
-    }
 end
 
 --[[
     ========================================
-    Auto Pick Up System (Event-Driven)
+    Event System (Efficient & Minimal CPU)
     ========================================
 --]]
 
--- Check if plant should be picked up based on damage filter
-function AutoPlace.ShouldPickUpPlant(plantModel)
-    if not AutoPlace.Settings.AutoPickUpEnabled then
-        return false
+-- Setup event listeners (only triggers when money/rebirth changes)
+function Platform.SetupEventListeners()
+    -- Disconnect old listeners
+    if Platform.MoneyConnection then
+        Platform.MoneyConnection:Disconnect()
+    end
+    if Platform.RebirthConnection then
+        Platform.RebirthConnection:Disconnect()
     end
     
-    local pickupFilter = AutoPlace.Settings.PickUpDamageFilter or 0
-    if pickupFilter <= 0 then
-        return false  -- No filter set
-    end
+    local player = Platform.References.LocalPlayer
     
-    local damage = plantModel:GetAttribute("Damage") or 0
-    return damage <= pickupFilter
-end
-
--- Pick up a single plant
-function AutoPlace.PickUpPlant(plantModel)
-    local id = plantModel:GetAttribute("ID")
-    if not id then return false end
-    
-    local damage = plantModel:GetAttribute("Damage") or 0
-    
-    local success = pcall(function()
-        AutoPlace.References.RemoveItemRemote:FireServer(id)
+    -- Listen for money changes (from leaderstats)
+    Platform.MoneyConnection = player.leaderstats.Money.Changed:Connect(function(newMoney)
+        if Platform.Settings.AutoUnlockEnabled and Platform.IsRunning then
+            print("[Platform] Money changed: $" .. FormatNumber(newMoney))
+            Platform.TryUnlockNext()
+        end
     end)
     
-    if success then
-        AutoPlace.TotalPickUps = AutoPlace.TotalPickUps + 1
-    end
+    -- Listen for rebirth changes (from Attributes)
+    Platform.RebirthConnection = player:GetAttributeChangedSignal("Rebirth"):Connect(function()
+        if Platform.Settings.AutoUnlockEnabled and Platform.IsRunning then
+            local newRebirth = Platform.GetRebirth()
+            print("[Platform] Rebirth changed: " .. newRebirth)
+            Platform.TryUnlockNext()
+        end
+    end)
     
-    return success
+    print("✅ [Platform] Event-driven system started!")
+    print("💡 System will auto-unlock when money/rebirth changes!")
 end
 
--- Setup event-driven monitoring for planted items
-function AutoPlace.SetupPickUpMonitoring()
-    -- Disconnect old connections
-    for _, conn in ipairs(AutoPlace.PlantMonitorConnections) do
-        conn:Disconnect()
-    end
-    AutoPlace.PlantMonitorConnections = {}
-    
-    if not AutoPlace.Settings.AutoPickUpEnabled then
+--[[
+    ========================================
+    Start/Stop Functions
+    ========================================
+--]]
+
+function Platform.Start()
+    if Platform.IsRunning then
+        warn("[Platform] Already running!")
         return
     end
     
-    local plotNum = AutoPlace.GetOwnedPlot()
-    if not plotNum then return end
+    print("🚀 [Platform] Starting Auto Unlock Platform...")
     
-    pcall(function()
-        local plot = workspace.Plots:FindFirstChild(plotNum)
-        if not plot then return end
-        
-        local plants = plot:FindFirstChild("Plants")
-        if not plants then return end
-        
-        -- Monitor existing plants
-        for _, plantModel in ipairs(plants:GetChildren()) do
-            if plantModel:IsA("Model") then
-                -- Check immediately
-                if AutoPlace.ShouldPickUpPlant(plantModel) then
-                    task.spawn(function()
-                        task.wait(0.1)  -- Small delay to ensure attributes loaded
-                        AutoPlace.PickUpPlant(plantModel)
-                    end)
-                else
-                    -- Monitor for Damage attribute changes
-                    local conn = plantModel:GetAttributeChangedSignal("Damage"):Connect(function()
-                        if AutoPlace.ShouldPickUpPlant(plantModel) then
-                            AutoPlace.PickUpPlant(plantModel)
-                        end
-                    end)
-                    table.insert(AutoPlace.PlantMonitorConnections, conn)
-                end
-            end
-        end
-        
-        -- Monitor NEW plants being added
-        local addedConn = plants.ChildAdded:Connect(function(plantModel)
-            if not plantModel:IsA("Model") then return end
-            
-            task.wait(0.1)  -- Wait for attributes to load
-            
-            -- Check if should pick up immediately
-            if AutoPlace.ShouldPickUpPlant(plantModel) then
-                AutoPlace.PickUpPlant(plantModel)
-            else
-                -- Monitor for future damage changes
-                local damageConn = plantModel:GetAttributeChangedSignal("Damage"):Connect(function()
-                    if AutoPlace.ShouldPickUpPlant(plantModel) then
-                        AutoPlace.PickUpPlant(plantModel)
-                    end
-                end)
-                table.insert(AutoPlace.PlantMonitorConnections, damageConn)
-            end
+    Platform.IsRunning = true
+    
+    -- Setup event listeners
+    Platform.SetupEventListeners()
+    
+    -- Try to unlock immediately
+    if Platform.Settings.AutoUnlockEnabled then
+        task.defer(function()
+            task.wait(0.1)  -- Small delay to ensure everything is loaded
+            Platform.TryUnlockNext()
         end)
-        
-        table.insert(AutoPlace.PlantMonitorConnections, addedConn)
-    end)
-end
-
--- Start Auto Pick Up
-function AutoPlace.StartPickUp()
-    AutoPlace.SetupPickUpMonitoring()
-end
-
--- Stop Auto Pick Up
-function AutoPlace.StopPickUp()
-    for _, conn in ipairs(AutoPlace.PlantMonitorConnections) do
-        conn:Disconnect()
     end
-    AutoPlace.PlantMonitorConnections = {}
+    
+    print("✅ [Platform] Auto Unlock Platform started!")
 end
 
-return AutoPlace
+function Platform.Stop()
+    if not Platform.IsRunning then
+        warn("[Platform] Not running!")
+        return
+    end
+    
+    print("🛑 [Platform] Stopping Auto Unlock Platform...")
+    
+    Platform.IsRunning = false
+    
+    -- Disconnect event listeners
+    if Platform.MoneyConnection then
+        Platform.MoneyConnection:Disconnect()
+        Platform.MoneyConnection = nil
+    end
+    if Platform.RebirthConnection then
+        Platform.RebirthConnection:Disconnect()
+        Platform.RebirthConnection = nil
+    end
+    
+    print("✅ [Platform] Auto Unlock Platform stopped!")
+end
+
+--[[
+    ========================================
+    Initialize Module
+    ========================================
+--]]
+
+function Platform.Init(services, references, brain)
+    Platform.Services = services
+    Platform.References = references
+    Platform.Brain = brain
+    
+    print("✅ [Platform] Module initialized!")
+end
+
+--[[
+    ========================================
+    Return Module
+    ========================================
+--]]
+
+print("✅ [Platform] Module loaded successfully!")
+
+return Platform
 
