@@ -117,9 +117,6 @@ function Information.CreateSeedDetails(infoTab)
     -- Store seed info labels for updates
     Information.Brain.UI.SeedInfoLabels = {}
     
-    -- Store event connections for cleanup
-    local seedStockConnections = {}
-    
     for _, seedName in ipairs(seedList) do
         -- Get seed info with UI-based stock reading (directly read price & stock)
         local seedInstance = Information.References.Seeds:FindFirstChild(seedName)
@@ -157,8 +154,15 @@ function Information.CreateSeedDetails(infoTab)
                     
                     if success then
                         print("✅ Purchased: " .. seedName)
+                        
+                        -- Immediately update the display
+                        task.wait(0.2)  -- Wait for server response
+                        local updatedInfo = Information.AutoBuy.GetSeedInfo(seedInstance)
+                        local updatedPrice = updatedInfo.Price
+                        local updatedStock = updatedInfo.Stock
+                        infoLabel.Text = "$" .. FormatNumber(updatedPrice) .. " | Stock: " .. FormatNumber(updatedStock)
+                        
                         Information.Brain.UpdateMoney()
-                        -- Stock will update automatically via event listener!
                     else
                         print("❌ Failed to buy " .. seedName)
                     end
@@ -172,29 +176,42 @@ function Information.CreateSeedDetails(infoTab)
         
         -- Brain: Store label reference for real-time updates
         Information.Brain.UI.SeedInfoLabels[seedName] = infoLabel
-        
-        -- Setup event-driven stock monitoring (like gears!)
-        local success, seedUI = pcall(function()
-            local player = Information.References.LocalPlayer
-            return player.PlayerGui.Main.Seeds.Frame.ScrollingFrame:FindFirstChild(seedName)
-        end)
-        
-        if success and seedUI then
-            local stockLabel = seedUI:FindFirstChild("Stock")
-            if stockLabel and stockLabel:IsA("TextLabel") then
-                -- Listen for real-time stock text changes
-                local conn = stockLabel:GetPropertyChangedSignal("Text"):Connect(function()
-                    -- Read updated stock immediately when UI changes
-                    local updatedInfo = Information.AutoBuy.GetSeedInfo(seedInstance)
-                    local updatedPrice = updatedInfo.Price
-                    local updatedStock = updatedInfo.Stock
-                    infoLabel.Text = "$" .. FormatNumber(updatedPrice) .. " | Stock: " .. FormatNumber(updatedStock)
-                end)
-                
-                table.insert(seedStockConnections, conn)
+    end
+    
+    -- Brain: Update seed info every 0.3 seconds (faster for better UX)
+    task.spawn(function()
+        while task.wait(0.3) do
+            -- Update seed info
+            for seedName, label in pairs(Information.Brain.UI.SeedInfoLabels) do
+                if label then
+                    -- Read directly from UI like gears (no stale reference issue)
+                    local seedPrice = 0
+                    local seedStock = 0
+                    
+                    pcall(function()
+                        local seedUI = Information.References.LocalPlayer.PlayerGui.Main.Seeds.Frame.ScrollingFrame:FindFirstChild(seedName)
+                        if seedUI then
+                            -- Get price
+                            local priceLabel = seedUI:FindFirstChild("Price")
+                            if priceLabel and priceLabel.Text then
+                                local priceStr = priceLabel.Text:gsub("[^%d]", "")
+                                seedPrice = tonumber(priceStr) or 0
+                            end
+                            
+                            -- Get stock
+                            local stockLabel = seedUI:FindFirstChild("Stock")
+                            if stockLabel and stockLabel.Text then
+                                local stockNum = tonumber(stockLabel.Text:match("%d+"))
+                                seedStock = stockNum or 0
+                            end
+                        end
+                    end)
+                    
+                    label.Text = "$" .. FormatNumber(seedPrice) .. " | Stock: " .. FormatNumber(seedStock)
+                end
             end
         end
-    end
+    end)
 end
 
 -- Create Gear Details Section
