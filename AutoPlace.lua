@@ -540,9 +540,11 @@ function AutoPlace.ProcessPlant(plantTool)
     local placed = AutoPlace.PlacePlant(plantInfo, selectedSpot)
     
     if placed then
-        -- Invalidate cache so next placement can find spots in other rows
+        -- Wait for server to update the Plants attribute and replicate to client
+        task.wait(0.3)
+        
+        -- Invalidate cache so next placement reads fresh count
         AutoPlace.InvalidateCache()
-        task.wait(0.15)  -- Reduced: Faster placement cycle
     end
     
     AutoPlace.IsProcessing = false
