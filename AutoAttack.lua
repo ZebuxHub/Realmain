@@ -164,16 +164,31 @@ function AutoAttack.UpdateTargetCache()
     AutoAttack.CachedTargets = {}
     AutoAttack.LastCacheUpdate = now
     
-    print("[AutoAttack] 🔍 Scanning for targets...")
+    print("[AutoAttack] 🔍 Scanning for targets in workspace.ScriptedMap.Brainrots...")
     
-    -- Scan workspace for NPCs/Players
+    -- Scan workspace.ScriptedMap.Brainrots for NPCs only
     pcall(function()
         local myUserID = AutoAttack.GetUserID()
         print("[AutoAttack] My User ID:", myUserID)
         
-        -- Scan ALL workspace for models with Humanoids
-        for _, model in ipairs(workspace:GetDescendants()) do
-            if model:IsA("Model") and model.Name ~= "Workspace" then
+        -- Get the Brainrots folder
+        local scriptedMap = workspace:FindFirstChild("ScriptedMap")
+        if not scriptedMap then
+            print("[AutoAttack] ❌ ScriptedMap not found in workspace!")
+            return
+        end
+        
+        local brainrots = scriptedMap:FindFirstChild("Brainrots")
+        if not brainrots then
+            print("[AutoAttack] ❌ Brainrots folder not found in ScriptedMap!")
+            return
+        end
+        
+        print("[AutoAttack] ✅ Found Brainrots folder, scanning...")
+        
+        -- Scan only Brainrots folder for NPCs
+        for _, model in ipairs(brainrots:GetDescendants()) do
+            if model:IsA("Model") then
                 -- Check if this model is attackable
                 local humanoid = model:FindFirstChildOfClass("Humanoid")
                 local primaryPart = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso")
@@ -184,13 +199,13 @@ function AutoAttack.UpdateTargetCache()
                     local maxHealth = model:GetAttribute("MaxHealth") or humanoid.MaxHealth
                     
                     if health > 0 then
-                        -- OPTIMIZED: O(1) attribute check
+                        -- Get model ID and associated player
                         local associatedPlayer = model:GetAttribute("AssociatedPlayer")
                         local modelID = model:GetAttribute("ID")
                         
-                        print("[AutoAttack] 👤 Found model:", model.Name, "| HP:", health, "/", maxHealth, "| AssociatedPlayer:", associatedPlayer, "| ID:", modelID)
+                        print("[AutoAttack] 👤 Found Brainrot:", model.Name, "| HP:", health, "/", maxHealth, "| AssociatedPlayer:", associatedPlayer, "| ID:", modelID)
                         
-                        -- Only target models NOT owned by us
+                        -- Only target Brainrots NOT owned by us (exclude player characters)
                         if not associatedPlayer or associatedPlayer ~= myUserID then
                             table.insert(AutoAttack.CachedTargets, {
                                 Model = model,
@@ -203,7 +218,7 @@ function AutoAttack.UpdateTargetCache()
                             })
                             print("[AutoAttack] ✅ Added as valid target:", model.Name)
                         else
-                            print("[AutoAttack] ❌ Skipped (owned by us):", model.Name)
+                            print("[AutoAttack] ❌ Skipped (owned by player):", model.Name)
                         end
                     end
                 end
