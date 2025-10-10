@@ -387,6 +387,7 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
     end
     
     if not selectedSpot then
+        print("[AutoPlaceSeed] ⚠️ No available spot found for " .. seedInfo.Name)
         AutoPlaceSeed.IsProcessing = false
         return false
     end
@@ -495,6 +496,8 @@ function AutoPlaceSeed.ProcessAllSeeds()
                 AutoPlaceSeed.ProcessAllSeeds()
             end
         end)
+    elseif placed == 0 then
+        print("[AutoPlaceSeed] ⚠️ Could not place any seeds (rows full or no available spots)")
     end
     
     return placed
@@ -720,8 +723,9 @@ function AutoPlaceSeed.Start()
         AutoPlaceSeed.ProcessAllSeeds()
         
         -- Keep checking continuously if there are seeds and available spots
+        local failedAttempts = 0
         while AutoPlaceSeed.IsRunning and AutoPlaceSeed.StartGeneration == myGeneration do
-            task.wait(0.5) -- Check every 0.5 seconds (faster!)
+            task.wait(2) -- Check every 2 seconds
             
             if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
             
@@ -755,7 +759,22 @@ function AutoPlaceSeed.Start()
             
             if hasSeeds then
                 print("[AutoPlaceSeed] 🔄 Retrying placement (seeds still available)...")
-                AutoPlaceSeed.ProcessAllSeeds()
+                local placedCount = AutoPlaceSeed.ProcessAllSeeds()
+                
+                -- If failed to place anything, increment counter
+                if placedCount == 0 then
+                    failedAttempts = failedAttempts + 1
+                    print("[AutoPlaceSeed] ⚠️ Failed attempt " .. failedAttempts .. "/3")
+                    
+                    -- Stop retrying after 3 failed attempts (all rows probably full)
+                    if failedAttempts >= 3 then
+                        print("[AutoPlaceSeed] 🛑 Stopping retry loop (3 failed attempts, rows likely full)")
+                        break
+                    end
+                else
+                    -- Reset counter if we successfully placed something
+                    failedAttempts = 0
+                end
             end
         end
     end) -- end of task.spawn function
