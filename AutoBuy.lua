@@ -184,19 +184,10 @@ function AutoBuy.Start()
     AutoBuy.TotalPurchases = 0
     print("🚀 [AutoBuy] System STARTED")
     
-    -- Immediate initial purchase cycle (before event-driven system takes over)
-    task.spawn(function()
-        task.wait(0.05)  -- Minimal delay for system to initialize
-        if AutoBuy.IsRunning and AutoBuy.Settings.AutoBuyEnabled then
-            print("💰 [AutoBuy] Running initial purchase cycle...")
-            local success, purchasesMade = AutoBuy.ProcessCycle()
-            if purchasesMade and purchasesMade > 0 then
-                print("✅ [AutoBuy] Initial purchase: Bought " .. FormatNumber(purchasesMade) .. " seeds")
-            else
-                print("ℹ️ [AutoBuy] No purchases made (insufficient funds or no matching seeds)")
-            end
-        end
-    end)
+    -- Start continuous buying (non-blocking)
+    task.wait(0.05)  -- Minimal delay for system to initialize
+    print("💰 [AutoBuy] Starting continuous buying...")
+    AutoBuy.BuyUntilDone()
     
     return true
 end
@@ -215,15 +206,16 @@ function AutoBuy.Stop()
 end
 
 -- Process one cycle of auto-buying (called by event listeners)
+-- Returns: success, boughtAnything (single pass, not loop)
 function AutoBuy.ProcessCycle()
     -- Check if system is running
     if not AutoBuy.IsRunning then
-        return false, 0
+        return false, false
     end
     
     -- Check if auto-buy is enabled in settings
     if not AutoBuy.Settings.AutoBuyEnabled then
-        return false, 0
+        return false, false
     end
     
     -- Record check time
@@ -231,54 +223,62 @@ function AutoBuy.ProcessCycle()
     
     -- Get all seeds
     local seedList = AutoBuy.GetAllSeeds()
-    local purchasesMade = 0
+    local boughtAnything = false
     
-    -- Keep buying until we can't afford anything or stock is empty
-    local keepBuying = true
-    while keepBuying and AutoBuy.IsRunning and AutoBuy.Settings.AutoBuyEnabled do
-        local boughtThisRound = false
-        
-        -- Check each seed
-        for _, seedName in ipairs(seedList) do
-            -- Check if we should auto-buy this seed
-            if AutoBuy.ShouldBuySeed(seedName) then
-                local seedInstance = AutoBuy.References.Seeds:FindFirstChild(seedName)
+    -- Check each seed (single pass, not loop)
+    for _, seedName in ipairs(seedList) do
+        -- Check if we should auto-buy this seed
+        if AutoBuy.ShouldBuySeed(seedName) then
+            local seedInstance = AutoBuy.References.Seeds:FindFirstChild(seedName)
+            
+            if seedInstance then
+                local seedInfo = AutoBuy.GetSeedInfo(seedInstance)
                 
-                if seedInstance then
-                    local seedInfo = AutoBuy.GetSeedInfo(seedInstance)
+                -- Check if we can buy it (has money AND stock > 0)
+                if AutoBuy.CanAffordSeed(seedInfo) and seedInfo.Stock > 0 then
+                    local success = AutoBuy.PurchaseSeed(seedName)
                     
-                    -- Check if we can buy it (has money AND stock > 0)
-                    if AutoBuy.CanAffordSeed(seedInfo) and seedInfo.Stock > 0 then
-                        local success = AutoBuy.PurchaseSeed(seedName)
+                    if success then
+                        boughtAnything = true
                         
-                        if success then
-                            purchasesMade = purchasesMade + 1
-                            boughtThisRound = true
-                            
-                            -- Update last money after purchase
-                            AutoBuy.LastMoney = AutoBuy.GetMoney()
-                            
-                            -- 🧠 Brain: Update UI immediately after purchase
-                            if AutoBuy.Brain then
-                                AutoBuy.Brain.UpdateMoney()
-                                AutoBuy.Brain.UpdateSeedInfo()
-                            end
-                            
-                            -- CRITICAL: Yield to prevent freezing (one-by-one purchases)
-                            task.wait(0.05)
+                        -- Update last money after purchase
+                        AutoBuy.LastMoney = AutoBuy.GetMoney()
+                        
+                        -- 🧠 Brain: Update UI immediately after purchase
+                        if AutoBuy.Brain then
+                            AutoBuy.Brain.UpdateMoney()
+                            AutoBuy.Brain.UpdateSeedInfo()
                         end
                     end
                 end
             end
         end
-        
-        -- If we didn't buy anything this round, stop
-        if not boughtThisRound then
-            keepBuying = false
-        end
     end
     
-    return true, purchasesMade
+    return true, boughtAnything
+end
+
+-- Continuous buying loop (non-blocking, async)
+function AutoBuy.BuyUntilDone()
+    task.spawn(function()
+        local totalPurchases = 0
+        
+        while AutoBuy.IsRunning and AutoBuy.Settings.AutoBuyEnabled do
+            local success, boughtAnything = AutoBuy.ProcessCycle()
+            
+            if boughtAnything then
+                totalPurchases = totalPurchases + 1
+                task.wait(0.05)  -- Delay between purchases (non-blocking)
+            else
+                -- Nothing bought, stop loop
+                break
+            end
+        end
+        
+        if totalPurchases > 0 then
+            print("✅ [AutoBuy] Bought " .. FormatNumber(totalPurchases) .. " seeds")
+        end
+    end)
 end
 
 -- Setup event listeners (event-driven approach - no constant polling!)
@@ -307,13 +307,8 @@ function AutoBuy.SetupEventListeners()
             print("[AutoBuy] Money increased: $" .. FormatNumber(AutoBuy.LastMoney) .. " → $" .. FormatNumber(newMoney))
             AutoBuy.LastMoney = newMoney
             
-            -- Try to buy seeds
-            task.spawn(function()
-                local success, purchasesMade = AutoBuy.ProcessCycle()
-                if purchasesMade and purchasesMade > 0 then
-                    print("[AutoBuy] Bought " .. purchasesMade .. " seeds")
-                end
-            end)
+            -- Try to buy seeds (continuous until done)
+            AutoBuy.BuyUntilDone()
         else
             AutoBuy.LastMoney = newMoney
         end
@@ -337,20 +332,8 @@ function AutoBuy.SetupEventListeners()
                     print("[AutoBuy] Stock increased for " .. seedInfo.Name .. ": " .. FormatNumber(oldStock) .. " → " .. FormatNumber(newStock))
                     AutoBuy.LastStockCheck[seedInfo.Name] = newStock
                     
-                    -- Try to buy this specific seed if it's selected
-                    if AutoBuy.ShouldBuySeed(seedInfo.Name) then
-                        task.spawn(function()
-                            local currentInfo = AutoBuy.GetSeedInfo(seedInstance)
-                            if AutoBuy.CanAffordSeed(currentInfo) then
-                                AutoBuy.PurchaseSeed(seedInfo.Name)
-                                
-                                if AutoBuy.Brain then
-                                    AutoBuy.Brain.UpdateMoney()
-                                    AutoBuy.Brain.UpdateSeedInfo()
-                                end
-                            end
-                        end)
-                    end
+                    -- Try to buy seeds (continuous until done)
+                    AutoBuy.BuyUntilDone()
                 else
                     AutoBuy.LastStockCheck[seedInfo.Name] = newStock
                 end
