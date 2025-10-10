@@ -52,7 +52,6 @@ AutoBuy.Brain = nil
 --]]
 
 function AutoBuy.Init(services, references, settings, brain)
-    print("🛒 [AutoBuy] Initializing module...")
     
     -- Store dependencies
     AutoBuy.Services = services
@@ -60,7 +59,6 @@ function AutoBuy.Init(services, references, settings, brain)
     AutoBuy.Settings = settings
     AutoBuy.Brain = brain
     
-    print("✅ [AutoBuy] Module initialized successfully!")
     return true
 end
 
@@ -136,7 +134,6 @@ function AutoBuy.GetSeedInfo(seedInstance)
     end)
     
     if not success and err then
-        warn("[AutoBuy] Failed to read stock for " .. seedName .. ": " .. tostring(err))
     end
     
     return {
@@ -199,9 +196,7 @@ function AutoBuy.PurchaseSeed(seedName)
     if success then
         AutoBuy.TotalPurchases = AutoBuy.TotalPurchases + 1
         AutoBuy.LastPurchaseTime = tick()
-        print("✅ [AutoBuy] Bought seed:", seedName, "| Total purchases:", AutoBuy.TotalPurchases)
     else
-        print("❌ [AutoBuy] Failed to buy seed:", seedName, "-", err)
     end
     
     return success
@@ -216,17 +211,14 @@ end
 -- Start the auto-buy system
 function AutoBuy.Start()
     if AutoBuy.IsRunning then
-        print("⚠️ [AutoBuy] Already running!")
         return false
     end
     
     AutoBuy.IsRunning = true
     AutoBuy.TotalPurchases = 0
-    print("🚀 [AutoBuy] System STARTED")
     
     -- Start continuous buying (non-blocking)
     task.wait(0.05)  -- Minimal delay for system to initialize
-    print("💰 [AutoBuy] Starting continuous buying...")
     AutoBuy.BuyUntilDone()
     
     return true
@@ -235,12 +227,10 @@ end
 -- Stop the auto-buy system
 function AutoBuy.Stop()
     if not AutoBuy.IsRunning then
-        print("⚠️ [AutoBuy] Already stopped!")
         return false
     end
     
     AutoBuy.IsRunning = false
-    print("⏹️ [AutoBuy] System STOPPED | Total purchases:", AutoBuy.TotalPurchases)
     
     return true
 end
@@ -325,14 +315,12 @@ function AutoBuy.BuyUntilDone()
         end
         
         if totalPurchases > 0 then
-            print("✅ [AutoBuy] Bought " .. FormatNumber(totalPurchases) .. " seeds")
         end
     end)
 end
 
 -- Setup event listeners (event-driven approach - no constant polling!)
 function AutoBuy.SetupEventListeners()
-    print("🔧 [AutoBuy] Setting up event listeners...")
     
     -- Disconnect old connections if any
     if AutoBuy.MoneyConnection then
@@ -358,7 +346,6 @@ function AutoBuy.SetupEventListeners()
         
         -- Only trigger if money increased
         if newMoney > AutoBuy.LastMoney then
-            print("[AutoBuy] Money increased: $" .. FormatNumber(AutoBuy.LastMoney) .. " → $" .. FormatNumber(newMoney))
             AutoBuy.LastMoney = newMoney
             
             -- Try to buy seeds if enabled
@@ -390,7 +377,6 @@ function AutoBuy.SetupEventListeners()
                 
                 -- Only trigger if stock increased and system is enabled
                 if newStock > oldStock and AutoBuy.Settings.AutoBuyEnabled and AutoBuy.IsRunning then
-                    print("[AutoBuy] Stock increased for " .. seedInfo.Name .. ": " .. FormatNumber(oldStock) .. " → " .. FormatNumber(newStock))
                     AutoBuy.LastStockCheck[seedInfo.Name] = newStock
                     
                     -- Try to buy seeds (continuous until done)
@@ -428,7 +414,6 @@ function AutoBuy.SetupEventListeners()
                         
                         -- Only trigger if stock increased and gear buying is enabled
                         if newStock > oldStock and AutoBuy.Settings.AutoBuyGearEnabled and AutoBuy.IsRunning then
-                            print("[AutoBuy] Gear stock increased for " .. gearName .. ": " .. FormatNumber(oldStock) .. " → " .. FormatNumber(newStock))
                             AutoBuy.LastStockCheck[gearName] = newStock
                             
                             -- Try to buy gears (continuous until done)
@@ -444,16 +429,10 @@ function AutoBuy.SetupEventListeners()
         end
     end
     
-    print("✅ [AutoBuy] Event listeners setup complete!")
-    print("  - Monitoring money changes")
-    print("  - Monitoring " .. #AutoBuy.StockConnections .. " seed stock changes")
-    print("  - Monitoring " .. #AutoBuy.GearStockConnections .. " gear stock changes")
-    print("  - Monitoring stock changes for", #AutoBuy.StockConnections, "seeds")
 end
 
 -- Main initialization (called by Main script)
 function AutoBuy.RunLoop()
-    print("🔄 [AutoBuy] Starting event-driven system...")
     
     -- Setup event listeners instead of polling
     AutoBuy.SetupEventListeners()
@@ -464,16 +443,10 @@ function AutoBuy.RunLoop()
             task.wait(60)  -- Check every minute
             
             if AutoBuy.IsRunning then
-                print("[AutoBuy] Status Report:")
-                print("  - Total Purchases:", AutoBuy.TotalPurchases)
-                print("  - System:", AutoBuy.Settings.AutoBuyEnabled and "ENABLED" or "DISABLED")
-                print("  - Current Money: $" .. FormatNumber(AutoBuy.GetMoney()))
             end
         end
     end)
     
-    print("✅ [AutoBuy] Event-driven system started!")
-    print("💡 System will auto-buy when money/stock changes!")
 end
 
 --[[
@@ -496,19 +469,9 @@ end
 -- Print status
 function AutoBuy.PrintStatus()
     local status = AutoBuy.GetStatus()
-    print("===========================================")
-    print("🛒 [AutoBuy] Status Report")
-    print("===========================================")
-    print("  Version:", status.Version)
-    print("  Running:", status.IsRunning and "YES" or "NO")
-    print("  Total Purchases:", status.TotalPurchases)
-    print("  Last Check:", math.floor(tick() - status.LastCheckTime), "seconds ago")
     if status.LastPurchaseTime > 0 then
-        print("  Last Purchase:", math.floor(tick() - status.LastPurchaseTime), "seconds ago")
     else
-        print("  Last Purchase: Never")
     end
-    print("===========================================")
 end
 
 --[[
@@ -601,9 +564,7 @@ function AutoBuy.PurchaseGear(gearName)
     end)
     
     if success then
-        print("✅ [AutoBuy] Bought gear:", gearName)
     else
-        print("❌ [AutoBuy] Failed to buy gear:", gearName, "-", err)
     end
     
     return success
@@ -665,7 +626,6 @@ function AutoBuy.BuyGearsUntilDone()
         end
         
         if totalPurchases > 0 then
-            print("✅ [AutoBuy] Bought " .. totalPurchases .. " gears")
         end
     end)
 end
@@ -676,7 +636,6 @@ end
     ========================================
 --]]
 
-print("✅ [AutoBuy] Module loaded successfully!")
 
 return AutoBuy
 
