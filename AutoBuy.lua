@@ -233,33 +233,45 @@ function AutoBuy.ProcessCycle()
     local seedList = AutoBuy.GetAllSeeds()
     local purchasesMade = 0
     
-    -- Check each seed
-    for _, seedName in ipairs(seedList) do
-        -- Check if we should auto-buy this seed
-        if AutoBuy.ShouldBuySeed(seedName) then
-            local seedInstance = AutoBuy.References.Seeds:FindFirstChild(seedName)
-            
-            if seedInstance then
-                local seedInfo = AutoBuy.GetSeedInfo(seedInstance)
+    -- Keep buying until we can't afford anything or stock is empty
+    local keepBuying = true
+    while keepBuying and AutoBuy.IsRunning and AutoBuy.Settings.AutoBuyEnabled do
+        local boughtThisRound = false
+        
+        -- Check each seed
+        for _, seedName in ipairs(seedList) do
+            -- Check if we should auto-buy this seed
+            if AutoBuy.ShouldBuySeed(seedName) then
+                local seedInstance = AutoBuy.References.Seeds:FindFirstChild(seedName)
                 
-                -- Check if we can buy it
-                if AutoBuy.CanAffordSeed(seedInfo) then
-                    local success = AutoBuy.PurchaseSeed(seedName)
+                if seedInstance then
+                    local seedInfo = AutoBuy.GetSeedInfo(seedInstance)
                     
-                    if success then
-                        purchasesMade = purchasesMade + 1
+                    -- Check if we can buy it (has money AND stock > 0)
+                    if AutoBuy.CanAffordSeed(seedInfo) and seedInfo.Stock > 0 then
+                        local success = AutoBuy.PurchaseSeed(seedName)
                         
-                        -- Update last money after purchase
-                        AutoBuy.LastMoney = AutoBuy.GetMoney()
-                        
-                        -- 🧠 Brain: Update UI immediately after purchase
-                        if AutoBuy.Brain then
-                            AutoBuy.Brain.UpdateMoney()
-                            AutoBuy.Brain.UpdateSeedInfo()
+                        if success then
+                            purchasesMade = purchasesMade + 1
+                            boughtThisRound = true
+                            
+                            -- Update last money after purchase
+                            AutoBuy.LastMoney = AutoBuy.GetMoney()
+                            
+                            -- 🧠 Brain: Update UI immediately after purchase
+                            if AutoBuy.Brain then
+                                AutoBuy.Brain.UpdateMoney()
+                                AutoBuy.Brain.UpdateSeedInfo()
+                            end
                         end
                     end
                 end
             end
+        end
+        
+        -- If we didn't buy anything this round, stop
+        if not boughtThisRound then
+            keepBuying = false
         end
     end
     
