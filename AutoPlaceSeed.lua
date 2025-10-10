@@ -389,14 +389,17 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
                         -- Count actual seeds in this row RIGHT NOW
                         local actualCount = AutoPlaceSeed.CountSeedsInRow(spot.RowName, grass)
                         
+                        print("[AutoPlaceSeed DEBUG] Row " .. spot.RowName .. " has " .. actualCount .. " items (plants+seeds)")
+                        
                         -- Check if row has space (less than 5 seeds)
                         if actualCount < AutoPlaceSeed.MaxSeedsPerRow then
                             selectedSpot = spot
                             -- Mark this CFrame as used
                             AutoPlaceSeed.UsedCFrames[cframeKey] = true
+                            print("[AutoPlaceSeed] ✅ Placing in row " .. spot.RowName .. " (" .. actualCount .. "/5)")
                             break
                         else
-                            print("[AutoPlaceSeed] Row " .. spot.RowName .. " is full (" .. actualCount .. "/5), skipping...")
+                            print("[AutoPlaceSeed] ❌ Row " .. spot.RowName .. " is full (" .. actualCount .. "/5), skipping...")
                         end
                     end
                 end
