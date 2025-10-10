@@ -184,21 +184,21 @@ function Information.CreateSeedDetails(infoTab)
             -- Update seed info
             for seedName, label in pairs(Information.Brain.UI.SeedInfoLabels) do
                 if label then
-                    -- Read directly from UI like gears (no stale reference issue)
                     local seedPrice = 0
                     local seedStock = 0
                     
+                    -- Get price from ReplicatedStorage attributes
+                    pcall(function()
+                        local seedInstance = Information.References.Seeds:FindFirstChild(seedName)
+                        if seedInstance then
+                            seedPrice = seedInstance:GetAttribute("Price") or 0
+                        end
+                    end)
+                    
+                    -- Get stock from UI (real-time)
                     pcall(function()
                         local seedUI = Information.References.LocalPlayer.PlayerGui.Main.Seeds.Frame.ScrollingFrame:FindFirstChild(seedName)
                         if seedUI then
-                            -- Get price
-                            local priceLabel = seedUI:FindFirstChild("Price")
-                            if priceLabel and priceLabel.Text then
-                                local priceStr = priceLabel.Text:gsub("[^%d]", "")
-                                seedPrice = tonumber(priceStr) or 0
-                            end
-                            
-                            -- Get stock
                             local stockLabel = seedUI:FindFirstChild("Stock")
                             if stockLabel and stockLabel.Text then
                                 local stockNum = tonumber(stockLabel.Text:match("%d+"))
