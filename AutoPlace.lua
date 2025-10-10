@@ -542,7 +542,7 @@ function AutoPlace.ProcessPlant(plantTool)
         AutoPlace.InvalidateCache()
         
         -- Small wait for server to process
-        task.wait(0.2)
+        task.wait(0.15)
     end
     
     AutoPlace.IsProcessing = false
@@ -785,7 +785,7 @@ function AutoPlace.Start()
         
         -- Keep checking periodically if there are plants and available spots
         while AutoPlace.IsRunning and AutoPlace.StartGeneration == myGeneration do
-            task.wait(2) -- Check every 2 seconds
+            task.wait(0.3) -- Check every 0.3 seconds (very fast to catch when spots open up!)
             
             if AutoPlace.StartGeneration ~= myGeneration then return end
             
