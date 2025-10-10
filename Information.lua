@@ -133,6 +133,33 @@ function Information.CreateSeedDetails(infoTab)
                 Text = "$" .. FormatNumber(seedInfo.Price) .. " | Stock: " .. FormatNumber(seedInfo.Stock)
             })
             
+            -- Add Buy Button
+            row:Right():Button({
+                Label = "Buy",
+                State = "Primary",
+                Pushed = function(self)
+                    local currentMoney = Information.AutoBuy.GetMoney()
+                    local currentSeedInfo = Information.AutoBuy.GetSeedInfo(seedInstance)
+                    
+                    if currentMoney >= currentSeedInfo.Price and currentSeedInfo.Stock > 0 then
+                        print("💰 [Brain] Buying " .. seedName .. "...")
+                        local success = Information.AutoBuy.PurchaseSeed(seedName)
+                        
+                        if success then
+                            print("✅ Purchased: " .. seedName)
+                            task.wait(0.1)
+                            Information.Brain.UpdateMoney()
+                        else
+                            print("❌ Failed to buy " .. seedName)
+                        end
+                    elseif currentSeedInfo.Stock <= 0 then
+                        print("⚠️ " .. seedName .. " is out of stock!")
+                    else
+                        print("⚠️ Not enough money for " .. seedName .. "! Need: $" .. FormatNumber(currentSeedInfo.Price))
+                    end
+                end,
+            })
+            
             -- Brain: Store label reference for real-time updates
             Information.Brain.UI.SeedInfoLabels[seedName] = infoLabel
         end
