@@ -491,17 +491,22 @@ function AutoPlace.ProcessPlant(plantTool)
                 local cframeKey = tostring(spot.Floor.CFrame.Position)
                 
                 if not AutoPlace.UsedCFrames[cframeKey] then
-                    -- Read "Plants" attribute from Row (game's official count)
+                    -- Get the row and count actual plants in it
                     local row = plot.Rows:FindFirstChild(spot.RowName)
                     if row then
-                        local plantsCount = row:GetAttribute("Plants") or 0
+                        local grass = row:FindFirstChild("Grass")
                         
-                        -- Check if row has space
-                        if plantsCount < AutoPlace.MaxPlantsPerRow then
+                        -- Count actual plants in this row RIGHT NOW
+                        local actualCount = AutoPlace.CountPlantsInRow(spot.RowName, grass)
+                        
+                        -- Check if row has space (less than 5 plants)
+                        if actualCount < AutoPlace.MaxPlantsPerRow then
                             selectedSpot = spot
                             -- Mark this CFrame as used
                             AutoPlace.UsedCFrames[cframeKey] = true
                             break
+                        else
+                            print("[AutoPlace] Row " .. spot.RowName .. " is full (" .. actualCount .. "/5), skipping...")
                         end
                     end
                 end
