@@ -107,7 +107,47 @@ function AutoPlaceSeed.GetOwnedPlot()
     return nil
 end
 
--- Removed complex counting - we read Plants attribute directly in ProcessSeed
+-- Count items in a row (plants from Plots + seeds from Countdowns)
+function AutoPlaceSeed.CountItemsInRow(rowName)
+    local plotNum = AutoPlaceSeed.GetOwnedPlot()
+    if not plotNum then return 0 end
+    
+    local totalCount = 0
+    
+    -- Count plants from workspace.Plots[plotNum].Plants
+    pcall(function()
+        local plot = workspace.Plots:FindFirstChild(tostring(plotNum))
+        if plot then
+            local plants = plot:FindFirstChild("Plants")
+            if plants then
+                for _, plant in ipairs(plants:GetChildren()) do
+                    local plantRow = plant:GetAttribute("Row")
+                    if plantRow and tostring(plantRow) == tostring(rowName) then
+                        totalCount = totalCount + 1
+                    end
+                end
+            end
+        end
+    end)
+    
+    -- Count seeds from workspace.ScriptedMap.Countdowns
+    pcall(function()
+        local scriptedMap = workspace:FindFirstChild("ScriptedMap")
+        if scriptedMap then
+            local countdowns = scriptedMap:FindFirstChild("Countdowns")
+            if countdowns then
+                for _, seed in ipairs(countdowns:GetChildren()) do
+                    local seedRow = seed:GetAttribute("Row")
+                    if seedRow and tostring(seedRow) == tostring(rowName) then
+                        totalCount = totalCount + 1
+                    end
+                end
+            end
+        end
+    end)
+    
+    return totalCount
+end
 
 -- Invalidate spots cache
 function AutoPlaceSeed.InvalidateCache()
@@ -328,21 +368,18 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
                 local cframeKey = tostring(spot.Floor.CFrame.Position)
                 
                 if not AutoPlaceSeed.UsedCFrames[cframeKey] then
-                    -- Read Plants attribute DIRECTLY from the row
-                    local row = plot.Rows:FindFirstChild(spot.RowName)
-                    if row then
-                        local plantsCount = row:GetAttribute("Plants") or 0
-                        
-                        -- Check if row has space (less than 5 items)
-                        if plantsCount < AutoPlaceSeed.MaxSeedsPerRow then
-                            selectedSpot = spot
-                            -- Mark this CFrame as used
-                            AutoPlaceSeed.UsedCFrames[cframeKey] = true
-                            print("[AutoPlaceSeed] ✅ Row " .. spot.RowName .. " has " .. plantsCount .. "/5 → Placing")
-                            break
-                        else
-                            print("[AutoPlaceSeed] ❌ Row " .. spot.RowName .. " is FULL (" .. plantsCount .. "/5) → Next row")
-                        end
+                    -- Count actual items in this row (plants + seeds)
+                    local itemCount = AutoPlaceSeed.CountItemsInRow(spot.RowName)
+                    
+                    -- Check if row has space (less than 5 items)
+                    if itemCount < AutoPlaceSeed.MaxSeedsPerRow then
+                        selectedSpot = spot
+                        -- Mark this CFrame as used
+                        AutoPlaceSeed.UsedCFrames[cframeKey] = true
+                        print("[AutoPlaceSeed] ✅ Row " .. spot.RowName .. " has " .. itemCount .. "/5 → Placing")
+                        break
+                    else
+                        print("[AutoPlaceSeed] ❌ Row " .. spot.RowName .. " is FULL (" .. itemCount .. "/5) → Next row")
                     end
                 end
             end
@@ -387,8 +424,8 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
     local placed = AutoPlaceSeed.PlaceSeed(seedInfo, selectedSpot)
     
     if placed then
-        -- Wait for server to update the Plants attribute and replicate to client
-        task.wait(0.3)
+        -- Wait longer for server to update Plants attribute and replicate to client
+        task.wait(0.5)
         
         -- Invalidate cache so next placement reads fresh count
         AutoPlaceSeed.InvalidateCache()
