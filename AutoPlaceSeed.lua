@@ -107,41 +107,7 @@ function AutoPlaceSeed.GetOwnedPlot()
     return nil
 end
 
--- Count ALL items (plants + seeds) in a specific row by reading the Row's Plants attribute
-function AutoPlaceSeed.CountSeedsInRow(rowName, grass)
-    -- The game already counts plants + seeds in the "Plants" attribute on the Row!
-    local plotNum = AutoPlaceSeed.GetOwnedPlot()
-    if not plotNum then return 0 end
-    
-    local count = 0
-    local success = pcall(function()
-        local plot = workspace.Plots:FindFirstChild(tostring(plotNum))
-        if plot then
-            local rows = plot:FindFirstChild("Rows")
-            if rows then
-                local row = rows:FindFirstChild(tostring(rowName))
-                if row then
-                    -- Read the Plants attribute (includes both plants AND seeds)
-                    count = row:GetAttribute("Plants") or 0
-                end
-            end
-        end
-    end)
-    
-    if not success then
-        warn("[AutoPlaceSeed] Failed to read Plants attribute for row " .. rowName)
-    end
-    
-    print("[AutoPlaceSeed COUNT] Row " .. rowName .. " has " .. count .. " items (from Plants attribute)")
-    
-    return count
-end
-
--- Check if row has space for more seeds (< 5)
-function AutoPlaceSeed.CanPlaceInRow(rowName, grass)
-    local count = AutoPlaceSeed.CountSeedsInRow(rowName, grass)
-    return count < AutoPlaceSeed.MaxSeedsPerRow
-end
+-- Removed complex counting - we read Plants attribute directly in ProcessSeed
 
 -- Invalidate spots cache
 function AutoPlaceSeed.InvalidateCache()
@@ -362,25 +328,20 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
                 local cframeKey = tostring(spot.Floor.CFrame.Position)
                 
                 if not AutoPlaceSeed.UsedCFrames[cframeKey] then
-                    -- Get the row and count actual seeds in it
+                    -- Read Plants attribute DIRECTLY from the row
                     local row = plot.Rows:FindFirstChild(spot.RowName)
                     if row then
-                        local grass = row:FindFirstChild("Grass")
+                        local plantsCount = row:GetAttribute("Plants") or 0
                         
-                        -- Count actual seeds in this row RIGHT NOW
-                        local actualCount = AutoPlaceSeed.CountSeedsInRow(spot.RowName, grass)
-                        
-                        print("[AutoPlaceSeed DEBUG] Row " .. spot.RowName .. " has " .. actualCount .. " items (plants+seeds)")
-                        
-                        -- Check if row has space (less than 5 seeds)
-                        if actualCount < AutoPlaceSeed.MaxSeedsPerRow then
+                        -- Check if row has space (less than 5 items)
+                        if plantsCount < AutoPlaceSeed.MaxSeedsPerRow then
                             selectedSpot = spot
                             -- Mark this CFrame as used
                             AutoPlaceSeed.UsedCFrames[cframeKey] = true
-                            print("[AutoPlaceSeed] ✅ Placing in row " .. spot.RowName .. " (" .. actualCount .. "/5)")
+                            print("[AutoPlaceSeed] ✅ Row " .. spot.RowName .. " has " .. plantsCount .. "/5 → Placing")
                             break
                         else
-                            print("[AutoPlaceSeed] ❌ Row " .. spot.RowName .. " is full (" .. actualCount .. "/5), skipping...")
+                            print("[AutoPlaceSeed] ❌ Row " .. spot.RowName .. " is FULL (" .. plantsCount .. "/5) → Next row")
                         end
                     end
                 end
@@ -426,34 +387,8 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
     local placed = AutoPlaceSeed.PlaceSeed(seedInfo, selectedSpot)
     
     if placed then
-        -- Wait for the Plants attribute to actually update (with timeout)
-        local plotNum = AutoPlaceSeed.GetOwnedPlot()
-        if plotNum then
-            pcall(function()
-                local plot = workspace.Plots:FindFirstChild(tostring(plotNum))
-                local row = plot.Rows:FindFirstChild(selectedSpot.RowName)
-                if row then
-                    local oldCount = row:GetAttribute("Plants") or 0
-                    local startTime = tick()
-                    local maxWait = 2  -- Wait up to 2 seconds
-                    
-                    -- Wait for Plants attribute to change
-                    while (tick() - startTime) < maxWait do
-                        local newCount = row:GetAttribute("Plants") or 0
-                        if newCount > oldCount then
-                            print("[AutoPlaceSeed] ✅ Attribute updated: " .. oldCount .. " → " .. newCount)
-                            break
-                        end
-                        task.wait(0.05)
-                    end
-                    
-                    -- If timeout, still continue but warn
-                    if (tick() - startTime) >= maxWait then
-                        warn("[AutoPlaceSeed] ⚠️ Attribute did not update in time, continuing anyway")
-                    end
-                end
-            end)
-        end
+        -- Wait for server to update the Plants attribute and replicate to client
+        task.wait(0.3)
         
         -- Invalidate cache so next placement reads fresh count
         AutoPlaceSeed.InvalidateCache()
