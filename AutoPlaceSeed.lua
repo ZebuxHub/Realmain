@@ -107,51 +107,32 @@ function AutoPlaceSeed.GetOwnedPlot()
     return nil
 end
 
--- Count ALL items (plants + seeds) in a specific row (they share the 5 item limit)
+-- Count ALL items (plants + seeds) in a specific row by reading the Row's Plants attribute
 function AutoPlaceSeed.CountSeedsInRow(rowName, grass)
+    -- The game already counts plants + seeds in the "Plants" attribute on the Row!
+    local plotNum = AutoPlaceSeed.GetOwnedPlot()
+    if not plotNum then return 0 end
+    
     local count = 0
-    
-    -- Count plants in Grass folder
-    if grass then
-        for _, spot in ipairs(grass:GetChildren()) do
-            if spot:IsA("Model") and spot.Name == "Floor" then
-                -- Count all models inside this spot (stacked plants)
-                for _, item in ipairs(spot:GetChildren()) do
-                    if item:IsA("Model") then
-                        count = count + 1
-                    end
-                end
-            else
-                -- If it's not a Floor, it might be a direct child plant (old format)
-                if spot:IsA("Model") and spot.Name ~= "Floor" then
-                    count = count + 1
-                end
-            end
-        end
-    end
-    
-    -- Add seeds from workspace.ScriptedMap.Countdowns
     local success = pcall(function()
-        local countdowns = workspace:FindFirstChild("ScriptedMap")
-        if countdowns then
-            countdowns = countdowns:FindFirstChild("Countdowns")
-            if countdowns then
-                for _, seed in ipairs(countdowns:GetChildren()) do
-                    if seed:IsA("Model") then
-                        local seedRow = seed:GetAttribute("Row")
-                        -- Compare row numbers
-                        if seedRow and tostring(seedRow) == tostring(rowName) then
-                            count = count + 1
-                        end
-                    end
+        local plot = workspace.Plots:FindFirstChild(tostring(plotNum))
+        if plot then
+            local rows = plot:FindFirstChild("Rows")
+            if rows then
+                local row = rows:FindFirstChild(tostring(rowName))
+                if row then
+                    -- Read the Plants attribute (includes both plants AND seeds)
+                    count = row:GetAttribute("Plants") or 0
                 end
             end
         end
     end)
     
     if not success then
-        warn("[AutoPlaceSeed] Failed to count seeds in row " .. rowName)
+        warn("[AutoPlaceSeed] Failed to read Plants attribute for row " .. rowName)
     end
+    
+    print("[AutoPlaceSeed COUNT] Row " .. rowName .. " has " .. count .. " items (from Plants attribute)")
     
     return count
 end
