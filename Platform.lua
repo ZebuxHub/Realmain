@@ -194,18 +194,26 @@ function Platform.UnlockPlatform(platformNum)
     end
 end
 
--- Count how many platforms are already unlocked
-function Platform.CountUnlockedPlatforms()
-    local platforms = Platform.GetAllPlatforms()
-    local count = 0
+-- Check if previous platform is unlocked (backward check)
+function Platform.IsPreviousPlatformUnlocked(currentPlatformNum)
+    local plotNum = Platform.GetPlayerPlot()
+    if not plotNum then return false end
     
-    for _, platform in ipairs(platforms) do
-        if platform.Enabled then
-            count = count + 1
-        end
+    local previousNum = currentPlatformNum - 1
+    
+    -- Platform 1 has no previous platform
+    if previousNum < 1 then
+        return true
     end
     
-    return count
+    -- Check if previous platform exists and is enabled
+    local success, enabled = pcall(function()
+        local plot = Platform.Services.Workspace.Plots:FindFirstChild(tostring(plotNum))
+        local previousPlatform = plot.Brainrots:FindFirstChild(tostring(previousNum))
+        return previousPlatform and (previousPlatform:GetAttribute("Enabled") or false)
+    end)
+    
+    return success and enabled
 end
 
 -- Try to unlock next available platform
@@ -215,7 +223,6 @@ function Platform.TryUnlockNext()
     local currentMoney = Platform.GetMoney()
     local currentRebirth = Platform.GetRebirth()
     local platforms = Platform.GetAllPlatforms()
-    local unlockedCount = Platform.CountUnlockedPlatforms()
     
     -- Find first locked platform that meets requirements
     for _, platform in ipairs(platforms) do
@@ -223,9 +230,10 @@ function Platform.TryUnlockNext()
         local platformNum = tonumber(platform.Number)
         
         if not isUnlocked then
-            -- Check sequential unlock requirement (can only unlock N+1)
-            if platformNum > unlockedCount + 1 then
-                print("[Platform] Platform " .. platform.Number .. " locked - must unlock previous platforms first (Unlocked: " .. unlockedCount .. ")")
+            -- Check if previous platform is unlocked (backward scan)
+            local previousUnlocked = Platform.IsPreviousPlatformUnlocked(platformNum)
+            if not previousUnlocked then
+                print("[Platform] Platform " .. platform.Number .. " locked - previous platform (#" .. (platformNum - 1) .. ") must be unlocked first")
                 break  -- Stop here, must unlock in order
             end
             
