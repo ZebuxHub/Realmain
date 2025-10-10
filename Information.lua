@@ -121,24 +121,20 @@ function Information.CreateSeedDetails(infoTab)
             -- Get seed info with UI-based stock reading
             local seedInfo = Information.AutoBuy.GetSeedInfo(seedInstance)
             
-            -- Create first row for seed info
+            -- Row 1: Seed info
             local row1 = form:Row()
             
             row1:Left():TitleStack({
                 Title = seedName,
-                Subtitle = "Plant: " .. seedInfo.Plant,
+                Subtitle = "Plant: " .. seedInfo.Plant .. " | $" .. FormatNumber(seedInfo.Price),
             })
             
             local infoLabel = row1:Right():Label({
-                Text = "$" .. FormatNumber(seedInfo.Price) .. " | Stock: " .. FormatNumber(seedInfo.Stock)
+                Text = "Stock: " .. FormatNumber(seedInfo.Stock)
             })
             
-            -- Create second row for buy button
+            -- Row 2: Buy button (full width)
             local row2 = form:Row()
-            
-            row2:Left():Label({
-                Text = "" -- Empty left side
-            })
             
             row2:Right():Button({
                 Label = "Buy " .. seedName,
@@ -157,7 +153,7 @@ function Information.CreateSeedDetails(infoTab)
                             -- Immediately update the display
                             task.wait(0.2)  -- Wait for server response
                             local updatedInfo = Information.AutoBuy.GetSeedInfo(seedInstance)
-                            infoLabel.Text = "$" .. FormatNumber(updatedInfo.Price) .. " | Stock: " .. FormatNumber(updatedInfo.Stock)
+                            infoLabel.Text = "Stock: " .. FormatNumber(updatedInfo.Stock)
                             
                             Information.Brain.UpdateMoney()
                         else
