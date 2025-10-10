@@ -356,17 +356,22 @@ function AutoPlaceSeed.ProcessSeed(seedTool)
                 local cframeKey = tostring(spot.Floor.CFrame.Position)
                 
                 if not AutoPlaceSeed.UsedCFrames[cframeKey] then
-                    -- Read "Plants" attribute from Row (game's official count)
+                    -- Get the row and count actual seeds in it
                     local row = plot.Rows:FindFirstChild(spot.RowName)
                     if row then
-                        local plantsCount = row:GetAttribute("Plants") or 0
+                        local grass = row:FindFirstChild("Grass")
                         
-                        -- Check if row has space (seeds count as plants in the attribute)
-                        if plantsCount < AutoPlaceSeed.MaxSeedsPerRow then
+                        -- Count actual seeds in this row RIGHT NOW
+                        local actualCount = AutoPlaceSeed.CountSeedsInRow(spot.RowName, grass)
+                        
+                        -- Check if row has space (less than 5 seeds)
+                        if actualCount < AutoPlaceSeed.MaxSeedsPerRow then
                             selectedSpot = spot
                             -- Mark this CFrame as used
                             AutoPlaceSeed.UsedCFrames[cframeKey] = true
                             break
+                        else
+                            print("[AutoPlaceSeed] Row " .. spot.RowName .. " is full (" .. actualCount .. "/5), skipping...")
                         end
                     end
                 end
