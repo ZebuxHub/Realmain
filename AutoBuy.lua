@@ -449,8 +449,11 @@ end
 function AutoBuy.GetAllGears()
     local gearList = {}
     
+    -- Gears are Tools inside the Gears folder
     for _, gearInstance in ipairs(AutoBuy.References.Gears:GetChildren()) do
-        table.insert(gearList, gearInstance.Name)
+        if gearInstance:IsA("Tool") then
+            table.insert(gearList, gearInstance.Name)
+        end
     end
     
     table.sort(gearList)
