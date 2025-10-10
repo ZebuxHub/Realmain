@@ -695,6 +695,29 @@ function AutoPlaceSeed.Start()
         
         if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
         AutoPlaceSeed.ProcessAllSeeds()
+        
+        -- Keep checking periodically if there are seeds and available spots
+        while AutoPlaceSeed.IsRunning and AutoPlaceSeed.StartGeneration == myGeneration do
+            task.wait(2) -- Check every 2 seconds
+            
+            if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
+            
+            -- Check if there are seeds in backpack/character
+            local hasSeeds = false
+            for _, item in ipairs(AutoPlaceSeed.References.Backpack:GetChildren()) do
+                if item:IsA("Tool") and string.sub(item.Name, -5) == " Seed" then
+                    if AutoPlaceSeed.ShouldPlaceSeed(item) then
+                        hasSeeds = true
+                        break
+                    end
+                end
+            end
+            
+            if hasSeeds then
+                print("[AutoPlaceSeed] 🔄 Retrying placement (seeds available)...")
+                AutoPlaceSeed.ProcessAllSeeds()
+            end
+        end
     end) -- end of task.spawn function
 end -- end of AutoPlaceSeed.Start()
 
