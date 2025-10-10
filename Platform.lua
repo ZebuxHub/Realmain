@@ -107,19 +107,16 @@ end
 function Platform.GetAllPlatforms()
     local plotNum = Platform.GetPlayerPlot()
     if not plotNum then
-        warn("[Platform] Player has no plot!")
         return {}
     end
     
     local plot = Platform.Services.Workspace.Plots:FindFirstChild(tostring(plotNum))
     if not plot then
-        warn("[Platform] Plot not found: " .. plotNum)
         return {}
     end
     
     local brainrots = plot:FindFirstChild("Brainrots")
     if not brainrots then
-        warn("[Platform] No Brainrots folder in plot!")
         return {}
     end
     
@@ -189,11 +186,9 @@ function Platform.UnlockPlatform(platformNum)
     end)
     
     if success then
-        print("✅ [Platform] Unlocked platform: " .. platformNum)
         table.insert(Platform.UnlockedPlatforms, platformNum)
         return true
     else
-        warn("[Platform] Failed to unlock platform " .. platformNum .. ": " .. tostring(err))
         return false
     end
 end
@@ -237,20 +232,16 @@ function Platform.TryUnlockNext()
             -- Check if previous platform is unlocked (backward scan)
             local previousUnlocked = Platform.IsPreviousPlatformUnlocked(platformNum)
             if not previousUnlocked then
-                print("[Platform] Platform " .. platform.Number .. " locked - previous platform (#" .. (platformNum - 1) .. ") must be unlocked first")
                 break  -- Stop here, must unlock in order
             end
             
             -- Check rebirth requirement
             if currentRebirth < platform.RebirthRequired then
-                print("[Platform] Platform " .. platform.Number .. " requires Rebirth " .. platform.RebirthRequired .. " (Current: " .. currentRebirth .. ")")
-                print("⏸️ [Platform] Waiting for rebirth to increase...")
                 return  -- Stop and wait for rebirth change event
             end
             
             -- Check money requirement
             if currentMoney >= platform.Price then
-                print("💰 [Platform] Unlocking platform " .. platform.Number .. " for $" .. FormatNumber(platform.Price))
                 
                 local success = Platform.UnlockPlatform(platform.Number)
                 
@@ -260,7 +251,6 @@ function Platform.TryUnlockNext()
                     
                     -- Check if actually unlocked
                     if Platform.IsPlatformUnlocked(platform.Number) then
-                        print("✅ [Platform] Platform " .. platform.Number .. " successfully unlocked!")
                         
                         -- Update money display
                         if Platform.Brain then
@@ -271,17 +261,13 @@ function Platform.TryUnlockNext()
                         task.wait(0.1)
                         Platform.TryUnlockNext()
                     else
-                        warn("⚠️ [Platform] Platform " .. platform.Number .. " unlock failed!")
                     end
                     
                     return  -- Exit after attempting one unlock
                 else
-                    warn("❌ [Platform] Failed to fire unlock remote for platform " .. platform.Number)
                     return
                 end
             else
-                print("[Platform] Not enough money for platform " .. platform.Number .. " (Need: $" .. FormatNumber(platform.Price - currentMoney) .. " more)")
-                print("⏸️ [Platform] Waiting for money to increase...")
                 return  -- Stop and wait for money change event
             end
         end
@@ -301,21 +287,16 @@ function Platform.EquipBestBrainrots()
     end)
     
     if success then
-        print("✅ [Platform] Equipped best brainrots!")
     else
-        warn("[Platform] Failed to equip brainrots: " .. tostring(err))
     end
 end
 
 -- Start auto-equip loop
 function Platform.StartEquipLoop()
     if Platform.EquipLoopRunning then
-        warn("[Platform] Equip loop already running!")
         return
     end
     
-    print("🔄 [Platform] Starting Auto Equip Best Brainrots...")
-    print("⏱️ [Platform] Interval: " .. Platform.Settings.EquipInterval .. " minutes")
     
     Platform.EquipLoopRunning = true
     
@@ -334,17 +315,14 @@ function Platform.StartEquipLoop()
         end
     end)
     
-    print("✅ [Platform] Auto Equip Best Brainrots started!")
 end
 
 -- Stop auto-equip loop
 function Platform.StopEquipLoop()
     if not Platform.EquipLoopRunning then
-        warn("[Platform] Equip loop not running!")
         return
     end
     
-    print("🛑 [Platform] Stopping Auto Equip Best Brainrots...")
     
     Platform.EquipLoopRunning = false
     
@@ -353,7 +331,6 @@ function Platform.StopEquipLoop()
         Platform.EquipTask = nil
     end
     
-    print("✅ [Platform] Auto Equip Best Brainrots stopped!")
 end
 
 --[[
@@ -377,7 +354,6 @@ function Platform.SetupEventListeners()
     -- Listen for money changes (from leaderstats)
     Platform.MoneyConnection = player.leaderstats.Money.Changed:Connect(function(newMoney)
         if Platform.Settings.AutoUnlockEnabled and Platform.IsRunning then
-            print("[Platform] Money changed: $" .. FormatNumber(newMoney))
             Platform.TryUnlockNext()
         end
     end)
@@ -386,13 +362,10 @@ function Platform.SetupEventListeners()
     Platform.RebirthConnection = player:GetAttributeChangedSignal("Rebirth"):Connect(function()
         if Platform.Settings.AutoUnlockEnabled and Platform.IsRunning then
             local newRebirth = Platform.GetRebirth()
-            print("[Platform] Rebirth changed: " .. newRebirth)
             Platform.TryUnlockNext()
         end
     end)
     
-    print("✅ [Platform] Event-driven system started!")
-    print("💡 System will auto-unlock when money/rebirth changes!")
 end
 
 --[[
@@ -403,11 +376,9 @@ end
 
 function Platform.Start()
     if Platform.IsRunning then
-        warn("[Platform] Already running!")
         return
     end
     
-    print("🚀 [Platform] Starting Auto Unlock Platform...")
     
     Platform.IsRunning = true
     
@@ -422,16 +393,13 @@ function Platform.Start()
         end)
     end
     
-    print("✅ [Platform] Auto Unlock Platform started!")
 end
 
 function Platform.Stop()
     if not Platform.IsRunning then
-        warn("[Platform] Not running!")
         return
     end
     
-    print("🛑 [Platform] Stopping Auto Unlock Platform...")
     
     Platform.IsRunning = false
     
@@ -445,7 +413,6 @@ function Platform.Stop()
         Platform.RebirthConnection = nil
     end
     
-    print("✅ [Platform] Auto Unlock Platform stopped!")
 end
 
 --[[
@@ -459,7 +426,6 @@ function Platform.Init(services, references, brain)
     Platform.References = references
     Platform.Brain = brain
     
-    print("✅ [Platform] Module initialized!")
 end
 
 --[[
@@ -468,7 +434,6 @@ end
     ========================================
 --]]
 
-print("✅ [Platform] Module loaded successfully!")
 
 return Platform
 
