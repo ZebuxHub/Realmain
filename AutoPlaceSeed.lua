@@ -707,14 +707,16 @@ function AutoPlaceSeed.Start()
         if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
         AutoPlaceSeed.ProcessAllSeeds()
         
-        -- Keep checking periodically if there are seeds and available spots
+        -- Keep checking continuously if there are seeds and available spots
         while AutoPlaceSeed.IsRunning and AutoPlaceSeed.StartGeneration == myGeneration do
-            task.wait(2) -- Check every 2 seconds
+            task.wait(0.5) -- Check every 0.5 seconds (faster!)
             
             if AutoPlaceSeed.StartGeneration ~= myGeneration then return end
             
             -- Check if there are seeds in backpack/character
             local hasSeeds = false
+            
+            -- Check backpack
             for _, item in ipairs(AutoPlaceSeed.References.Backpack:GetChildren()) do
                 if item:IsA("Tool") and string.sub(item.Name, -5) == " Seed" then
                     if AutoPlaceSeed.ShouldPlaceSeed(item) then
@@ -724,8 +726,23 @@ function AutoPlaceSeed.Start()
                 end
             end
             
+            -- Check character if not found in backpack
+            if not hasSeeds then
+                local character = AutoPlaceSeed.References.LocalPlayer.Character
+                if character then
+                    for _, item in ipairs(character:GetChildren()) do
+                        if item:IsA("Tool") and string.sub(item.Name, -5) == " Seed" then
+                            if AutoPlaceSeed.ShouldPlaceSeed(item) then
+                                hasSeeds = true
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+            
             if hasSeeds then
-                print("[AutoPlaceSeed] 🔄 Retrying placement (seeds available)...")
+                print("[AutoPlaceSeed] 🔄 Retrying placement (seeds still available)...")
                 AutoPlaceSeed.ProcessAllSeeds()
             end
         end
