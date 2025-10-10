@@ -40,13 +40,17 @@ Platform.Brain = nil
 --]]
 
 Platform.Settings = {
-    AutoUnlockEnabled = false
+    AutoUnlockEnabled = false,
+    AutoEquipBrainrotsEnabled = false,
+    EquipInterval = 5  -- Minutes between auto-equip
 }
 
 Platform.IsRunning = false
 Platform.UnlockedPlatforms = {}  -- Track already unlocked platforms
 Platform.MoneyConnection = nil
 Platform.RebirthConnection = nil
+Platform.EquipLoopRunning = false
+Platform.EquipTask = nil
 
 --[[
     ========================================
@@ -277,10 +281,79 @@ function Platform.TryUnlockNext()
                 end
             else
                 print("[Platform] Not enough money for platform " .. platform.Number .. " (Need: $" .. FormatNumber(platform.Price - currentMoney) .. " more)")
-                break  -- Stop here, can't afford this or further platforms
+                print("⏸️ [Platform] Waiting for money to increase...")
+                return  -- Stop and wait for money change event
             end
         end
     end
+end
+
+--[[
+    ========================================
+    Auto Equip Best Brainrots
+    ========================================
+--]]
+
+-- Equip best brainrots once
+function Platform.EquipBestBrainrots()
+    local success, err = pcall(function()
+        Platform.Services.ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("EquipBestBrainrots"):FireServer()
+    end)
+    
+    if success then
+        print("✅ [Platform] Equipped best brainrots!")
+    else
+        warn("[Platform] Failed to equip brainrots: " .. tostring(err))
+    end
+end
+
+-- Start auto-equip loop
+function Platform.StartEquipLoop()
+    if Platform.EquipLoopRunning then
+        warn("[Platform] Equip loop already running!")
+        return
+    end
+    
+    print("🔄 [Platform] Starting Auto Equip Best Brainrots...")
+    print("⏱️ [Platform] Interval: " .. Platform.Settings.EquipInterval .. " minutes")
+    
+    Platform.EquipLoopRunning = true
+    
+    -- Equip immediately on start
+    Platform.EquipBestBrainrots()
+    
+    -- Start loop
+    Platform.EquipTask = task.spawn(function()
+        while Platform.EquipLoopRunning and Platform.Settings.AutoEquipBrainrotsEnabled do
+            -- Wait for interval (convert minutes to seconds)
+            task.wait(Platform.Settings.EquipInterval * 60)
+            
+            if Platform.EquipLoopRunning and Platform.Settings.AutoEquipBrainrotsEnabled then
+                Platform.EquipBestBrainrots()
+            end
+        end
+    end)
+    
+    print("✅ [Platform] Auto Equip Best Brainrots started!")
+end
+
+-- Stop auto-equip loop
+function Platform.StopEquipLoop()
+    if not Platform.EquipLoopRunning then
+        warn("[Platform] Equip loop not running!")
+        return
+    end
+    
+    print("🛑 [Platform] Stopping Auto Equip Best Brainrots...")
+    
+    Platform.EquipLoopRunning = false
+    
+    if Platform.EquipTask then
+        task.cancel(Platform.EquipTask)
+        Platform.EquipTask = nil
+    end
+    
+    print("✅ [Platform] Auto Equip Best Brainrots stopped!")
 end
 
 --[[
