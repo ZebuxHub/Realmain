@@ -129,12 +129,15 @@ function Information.CreateSeedDetails(infoTab)
                 Subtitle = "Plant: " .. seedInfo.Plant,
             })
             
-            local infoLabel = row:Right():Label({
+            -- Right side: Stock label + Buy button
+            local rightSide = row:Right()
+            
+            local infoLabel = rightSide:Label({
                 Text = "$" .. FormatNumber(seedInfo.Price) .. " | Stock: " .. FormatNumber(seedInfo.Stock)
             })
             
-            -- Add Buy Button
-            row:Right():Button({
+            -- Add Buy Button on the same right side
+            rightSide:Button({
                 Label = "Buy",
                 State = "Primary",
                 Pushed = function(self)
@@ -147,7 +150,12 @@ function Information.CreateSeedDetails(infoTab)
                         
                         if success then
                             print("✅ Purchased: " .. seedName)
-                            task.wait(0.1)
+                            
+                            -- Immediately update the display
+                            task.wait(0.2)  -- Wait for server response
+                            local updatedInfo = Information.AutoBuy.GetSeedInfo(seedInstance)
+                            infoLabel.Text = "$" .. FormatNumber(updatedInfo.Price) .. " | Stock: " .. FormatNumber(updatedInfo.Stock)
+                            
                             Information.Brain.UpdateMoney()
                         else
                             print("❌ Failed to buy " .. seedName)
@@ -199,12 +207,15 @@ function Information.CreateGearDetails(infoTab)
             Subtitle = "Gear",
         })
         
-        local infoLabel = row:Right():Label({
+        -- Right side: Stock label + Buy button
+        local rightSide = row:Right()
+        
+        local infoLabel = rightSide:Label({
             Text = "$" .. FormatNumber(gearPrice) .. " | Stock: " .. FormatNumber(gearStock)
         })
         
-        -- Add Buy Button
-        row:Right():Button({
+        -- Add Buy Button on the same right side
+        rightSide:Button({
             Label = "Buy",
             State = "Primary",
             Pushed = function(self)
@@ -218,7 +229,13 @@ function Information.CreateGearDetails(infoTab)
                     
                     if success then
                         print("✅ Purchased: " .. gearName)
-                        task.wait(0.1)
+                        
+                        -- Immediately update the display
+                        task.wait(0.2)  -- Wait for server response
+                        local updatedPrice = Information.AutoBuy.GetGearPrice(gearName)
+                        local updatedStock = Information.AutoBuy.GetGearStock(gearName)
+                        infoLabel.Text = "$" .. FormatNumber(updatedPrice) .. " | Stock: " .. FormatNumber(updatedStock)
+                        
                         Information.Brain.UpdateMoney()
                     else
                         print("❌ Failed to buy " .. gearName)
