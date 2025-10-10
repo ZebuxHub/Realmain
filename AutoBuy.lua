@@ -23,8 +23,11 @@ AutoBuy.LastStockCheck = {}
 AutoBuy.MoneyConnection = nil
 AutoBuy.StockConnections = {}
 AutoBuy.GearStockConnections = {}
-AutoBuy.RestockConnection = nil
+
+-- Method 2 (Restock Spam)
 AutoBuy.Method2Running = false
+AutoBuy.Method2Connection = nil
+AutoBuy.Method2SpamTask = nil
 
 --[[
     ========================================
@@ -678,41 +681,41 @@ end
     ========================================
 --]]
 
--- Spam buy all affordable seeds as fast as possible
-function AutoBuy.SpamBuySeeds()
+-- Spam buy all seeds when NextSeedRestock = 1
+function AutoBuy.SpamBuyAllSeeds()
     local currentMoney = AutoBuy.GetMoney()
+    local allSeeds = AutoBuy.GetAllSeeds()
     
-    -- Get all seeds or selected seeds
+    -- Create list of seeds to buy based on selection
     local seedsToBuy = {}
     if #AutoBuy.Settings.SelectedSeeds == 0 then
         -- Buy all seeds
-        for _, seedInstance in ipairs(AutoBuy.References.Seeds:GetChildren()) do
-            local seedInfo = AutoBuy.GetSeedInfo(seedInstance)
-            if not seedInfo.Hidden then
-                table.insert(seedsToBuy, seedInfo.Name)
+        seedsToBuy = allSeeds
+    else
+        -- Only buy selected seeds
+        for _, seedName in ipairs(allSeeds) do
+            if table.find(AutoBuy.Settings.SelectedSeeds, seedName) then
+                table.insert(seedsToBuy, seedName)
             end
         end
-    else
-        -- Buy selected seeds only
-        seedsToBuy = AutoBuy.Settings.SelectedSeeds
     end
     
-    -- Spam buy as fast as possible (no delay)
+    -- Spam buy seeds as fast as possible
     for _, seedName in ipairs(seedsToBuy) do
         local seedInstance = AutoBuy.References.Seeds:FindFirstChild(seedName)
         if seedInstance then
             local seedInfo = AutoBuy.GetSeedInfo(seedInstance)
-            local currentMoney = AutoBuy.GetMoney()
             
-            -- Buy if we can afford it and has stock
+            -- Buy if we have money and stock > 0
             if currentMoney >= seedInfo.Price and seedInfo.Stock > 0 then
                 AutoBuy.PurchaseSeed(seedName)
+                -- No wait - spam as fast as possible!
             end
         end
     end
 end
 
--- Start Method 2 (Restock monitoring)
+-- Start Method 2 (Watch NextSeedRestock attribute)
 function AutoBuy.StartMethod2()
     if AutoBuy.Method2Running then
         warn("[AutoBuy] Method 2 already running!")
@@ -720,36 +723,35 @@ function AutoBuy.StartMethod2()
     end
     
     print("🚀 [AutoBuy] Starting Method 2 (Restock Spam)...")
-    print("👀 [AutoBuy] Watching NextSeedRestock attribute...")
     
     AutoBuy.Method2Running = true
-    
-    -- Disconnect old connection if exists
-    if AutoBuy.RestockConnection then
-        AutoBuy.RestockConnection:Disconnect()
-    end
     
     local player = AutoBuy.References.LocalPlayer
     
     -- Listen for NextSeedRestock attribute changes
-    AutoBuy.RestockConnection = player:GetAttributeChangedSignal("NextSeedRestock"):Connect(function()
+    AutoBuy.Method2Connection = player:GetAttributeChangedSignal("NextSeedRestock"):Connect(function()
         local restockValue = player:GetAttribute("NextSeedRestock")
         
         if restockValue == 1 and AutoBuy.Method2Running then
-            print("💥 [AutoBuy] NextSeedRestock = 1! SPAM BUYING...")
+            print("🔥 [AutoBuy] NextSeedRestock = 1! SPAM BUYING!")
             
-            -- Spam buy seeds repeatedly for 1 second
-            local startTime = tick()
-            while tick() - startTime < 1 and AutoBuy.Method2Running do
-                AutoBuy.SpamBuySeeds()
-                task.wait()  -- Yield to prevent crash, but continue as fast as possible
+            -- Cancel previous spam task if running
+            if AutoBuy.Method2SpamTask then
+                task.cancel(AutoBuy.Method2SpamTask)
             end
             
-            print("✅ [AutoBuy] Spam buying complete!")
+            -- Spam buy seeds continuously while = 1
+            AutoBuy.Method2SpamTask = task.spawn(function()
+                while player:GetAttribute("NextSeedRestock") == 1 and AutoBuy.Method2Running do
+                    AutoBuy.SpamBuyAllSeeds()
+                    task.wait(0.01)  -- Very fast spam (100 times per second)
+                end
+                print("⏸️ [AutoBuy] NextSeedRestock changed, stopping spam")
+            end)
         end
     end)
     
-    print("✅ [AutoBuy] Method 2 started!")
+    print("✅ [AutoBuy] Method 2 started! Watching NextSeedRestock attribute...")
 end
 
 -- Stop Method 2
@@ -763,9 +765,16 @@ function AutoBuy.StopMethod2()
     
     AutoBuy.Method2Running = false
     
-    if AutoBuy.RestockConnection then
-        AutoBuy.RestockConnection:Disconnect()
-        AutoBuy.RestockConnection = nil
+    -- Disconnect attribute listener
+    if AutoBuy.Method2Connection then
+        AutoBuy.Method2Connection:Disconnect()
+        AutoBuy.Method2Connection = nil
+    end
+    
+    -- Cancel spam task
+    if AutoBuy.Method2SpamTask then
+        task.cancel(AutoBuy.Method2SpamTask)
+        AutoBuy.Method2SpamTask = nil
     end
     
     print("✅ [AutoBuy] Method 2 stopped!")
