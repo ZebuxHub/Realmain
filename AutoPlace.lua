@@ -277,11 +277,12 @@ function AutoPlace.ShouldPlacePlant(plantInfo)
     end
 end
 
--- Count plants in a specific row (including stacked items in each spot)
+-- Count ALL items (plants + seeds) in a specific row (they share the 5 item limit)
 function AutoPlace.CountPlantsInRow(rowName, grass)
     local count = 0
+    
+    -- Count plants in Grass folder
     if grass then
-        -- Each spot (Floor) can have multiple plants stacked
         for _, spot in ipairs(grass:GetChildren()) do
             if spot:IsA("Model") and spot.Name == "Floor" then
                 -- Count all models inside this spot (stacked plants)
@@ -298,6 +299,30 @@ function AutoPlace.CountPlantsInRow(rowName, grass)
             end
         end
     end
+    
+    -- Add seeds from workspace.ScriptedMap.Countdowns
+    local success = pcall(function()
+        local countdowns = workspace:FindFirstChild("ScriptedMap")
+        if countdowns then
+            countdowns = countdowns:FindFirstChild("Countdowns")
+            if countdowns then
+                for _, seed in ipairs(countdowns:GetChildren()) do
+                    if seed:IsA("Model") then
+                        local seedRow = seed:GetAttribute("Row")
+                        -- Compare row numbers
+                        if seedRow and tostring(seedRow) == tostring(rowName) then
+                            count = count + 1
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    
+    if not success then
+        warn("[AutoPlace] Failed to count seeds in row " .. rowName)
+    end
+    
     return count
 end
 
@@ -831,11 +856,14 @@ function AutoPlace.ShouldPickUpPlant(plantModel)
     end
     
     local pickupFilter = AutoPlace.Settings.PickUpDamageFilter or 0
-    if pickupFilter <= 0 then
-        return false  -- No filter set
+    local damage = plantModel:GetAttribute("Damage") or 0
+    
+    -- If filter is 0, pick up ALL plants
+    if pickupFilter == 0 then
+        return true
     end
     
-    local damage = plantModel:GetAttribute("Damage") or 0
+    -- Otherwise, pick up plants with damage <= filter
     return damage <= pickupFilter
 end
 
