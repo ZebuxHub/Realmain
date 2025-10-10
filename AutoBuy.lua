@@ -22,6 +22,7 @@ AutoBuy.LastMoney = 0
 AutoBuy.LastStockCheck = {}
 AutoBuy.MoneyConnection = nil
 AutoBuy.StockConnections = {}
+AutoBuy.GearStockConnections = {}
 
 --[[
     ========================================
@@ -326,6 +327,11 @@ function AutoBuy.SetupEventListeners()
     end
     AutoBuy.StockConnections = {}
     
+    for _, conn in pairs(AutoBuy.GearStockConnections) do
+        conn:Disconnect()
+    end
+    AutoBuy.GearStockConnections = {}
+    
     -- Listen for money changes
     local moneyValue = AutoBuy.References.LocalPlayer.leaderstats.Money
     AutoBuy.LastMoney = moneyValue.Value
@@ -333,13 +339,20 @@ function AutoBuy.SetupEventListeners()
     AutoBuy.MoneyConnection = moneyValue:GetPropertyChangedSignal("Value"):Connect(function()
         local newMoney = moneyValue.Value
         
-        -- Only trigger if money increased and system is enabled
-        if newMoney > AutoBuy.LastMoney and AutoBuy.Settings.AutoBuyEnabled and AutoBuy.IsRunning then
+        -- Only trigger if money increased
+        if newMoney > AutoBuy.LastMoney then
             print("[AutoBuy] Money increased: $" .. FormatNumber(AutoBuy.LastMoney) .. " → $" .. FormatNumber(newMoney))
             AutoBuy.LastMoney = newMoney
             
-            -- Try to buy seeds (continuous until done)
-            AutoBuy.BuyUntilDone()
+            -- Try to buy seeds if enabled
+            if AutoBuy.Settings.AutoBuyEnabled and AutoBuy.IsRunning then
+                AutoBuy.BuyUntilDone()
+            end
+            
+            -- Try to buy gears if enabled
+            if AutoBuy.Settings.AutoBuyGearEnabled and AutoBuy.IsRunning then
+                AutoBuy.BuyGearsUntilDone()
+            end
         else
             AutoBuy.LastMoney = newMoney
         end
@@ -374,8 +387,50 @@ function AutoBuy.SetupEventListeners()
         end
     end
     
+    -- Listen for gear stock changes (from UI)
+    local player = game:GetService("Players").LocalPlayer
+    local success, gearScrollingFrame = pcall(function()
+        return player.PlayerGui:WaitForChild("Main"):WaitForChild("Gears"):WaitForChild("Frame"):WaitForChild("ScrollingFrame")
+    end)
+    
+    if success and gearScrollingFrame then
+        for _, gearFrame in ipairs(gearScrollingFrame:GetChildren()) do
+            if gearFrame:IsA("Frame") then
+                local gearName = gearFrame.Name
+                local stockLabel = gearFrame:FindFirstChild("Stock")
+                
+                if stockLabel and stockLabel:IsA("TextLabel") then
+                    -- Initialize last stock
+                    local initialStock = AutoBuy.GetGearStock(gearName)
+                    AutoBuy.LastStockCheck[gearName] = initialStock
+                    
+                    -- Listen for stock text changes
+                    local conn = stockLabel:GetPropertyChangedSignal("Text"):Connect(function()
+                        local newStock = AutoBuy.GetGearStock(gearName)
+                        local oldStock = AutoBuy.LastStockCheck[gearName] or 0
+                        
+                        -- Only trigger if stock increased and gear buying is enabled
+                        if newStock > oldStock and AutoBuy.Settings.AutoBuyGearEnabled and AutoBuy.IsRunning then
+                            print("[AutoBuy] Gear stock increased for " .. gearName .. ": " .. FormatNumber(oldStock) .. " → " .. FormatNumber(newStock))
+                            AutoBuy.LastStockCheck[gearName] = newStock
+                            
+                            -- Try to buy gears (continuous until done)
+                            AutoBuy.BuyGearsUntilDone()
+                        else
+                            AutoBuy.LastStockCheck[gearName] = newStock
+                        end
+                    end)
+                    
+                    table.insert(AutoBuy.GearStockConnections, conn)
+                end
+            end
+        end
+    end
+    
     print("✅ [AutoBuy] Event listeners setup complete!")
     print("  - Monitoring money changes")
+    print("  - Monitoring " .. #AutoBuy.StockConnections .. " seed stock changes")
+    print("  - Monitoring " .. #AutoBuy.GearStockConnections .. " gear stock changes")
     print("  - Monitoring stock changes for", #AutoBuy.StockConnections, "seeds")
 end
 
