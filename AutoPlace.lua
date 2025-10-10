@@ -371,7 +371,6 @@ function AutoPlace.InitializeRowCounts()
         end
     end)
     
-    print("[AutoPlace] 📊 Initialized row counts: " .. totalCount .. " items total")
 end
 
 -- Invalidate spots cache (call when CanPlace changes)
@@ -552,7 +551,6 @@ function AutoPlace.ProcessPlant(plantTool)
                 selectedSpot = spot
                 -- Mark this CFrame as used
                 AutoPlace.UsedCFrames[cframeKey] = true
-                print("[AutoPlace] ✅ Row " .. spot.RowName .. " has " .. itemCount .. "/5 → Placing")
                 break
             end
         end
@@ -849,7 +847,6 @@ function AutoPlace.Start()
                         local rowNum = removed:GetAttribute("Row")
                         if rowNum then
                             -- Row count already updated by SetupPlotMonitoring!
-                            print("[AutoPlace] 🔥 Plant removed from row " .. rowNum .. " → Spot available!")
                             TryProcessPlants("plant_removed")
                         end
                     end)
@@ -863,14 +860,12 @@ function AutoPlace.Start()
                         if rowNum then
                             -- Update row count manually (seeds aren't in Floor spots)
                             AutoPlace.UpdateRowCount(rowNum, -1)
-                            print("[AutoPlace] 🌱 Seed expired from row " .. rowNum .. " → Spot available!")
                             TryProcessPlants("seed_expired")
                         end
                     end)
                     table.insert(AutoPlace.PlotAttributeConnections, seedRemovedConn)
                 end
                 
-                print("[AutoPlace] 👀 Now monitoring for plant/seed removal (instant reaction!)")
             end
         end
     end)
