@@ -86,9 +86,10 @@ function AutoSell.GetAllPlants()
     return plants
 end
 
--- Get all brainrot names from ReplicatedStorage
-function AutoSell.GetAllBrainrots()
-    local brainrots = {}
+-- Get all unique brainrot rarities from ReplicatedStorage
+function AutoSell.GetAllBrainrotRarities()
+    local rarities = {}
+    local seen = {}  -- Track duplicates
     
     pcall(function()
         local brainrotsFolder = AutoSell.Services.ReplicatedStorage:FindFirstChild("Assets")
@@ -96,14 +97,26 @@ function AutoSell.GetAllBrainrots()
             brainrotsFolder = brainrotsFolder:FindFirstChild("Brainrots")
             if brainrotsFolder then
                 for _, brainrot in ipairs(brainrotsFolder:GetChildren()) do
-                    table.insert(brainrots, brainrot.Name)
+                    -- Get Rarity attribute from each brainrot model
+                    local rarity = brainrot:GetAttribute("Rarity")
+                    
+                    -- Only add if rarity exists and not seen before
+                    if rarity and not seen[rarity] then
+                        table.insert(rarities, rarity)
+                        seen[rarity] = true
+                    end
                 end
             end
         end
     end)
     
-    table.sort(brainrots)
-    return brainrots
+    table.sort(rarities)
+    return rarities
+end
+
+-- Legacy function for backwards compatibility
+function AutoSell.GetAllBrainrots()
+    return AutoSell.GetAllBrainrotRarities()
 end
 
 --[[
@@ -112,19 +125,53 @@ end
     ========================================
 ]]
 
--- Check if item name matches any keep list (handles prefixes like [Legendary])
-function AutoSell.ShouldKeepItem(itemName)
-    -- Check plants
+-- Get the base name from tool name (removes prefixes like [Legendary], [1.9 kg])
+function AutoSell.GetBaseName(toolName)
+    -- Remove prefixes in brackets
+    local baseName = toolName:gsub("%b[]%s*", "")
+    return baseName:match("^%s*(.-)%s*$")  -- Trim whitespace
+end
+
+-- Get brainrot rarity from ReplicatedStorage based on name
+function AutoSell.GetBrainrotRarity(toolName)
+    local baseName = AutoSell.GetBaseName(toolName)
+    
+    local rarity = nil
+    pcall(function()
+        local brainrotsFolder = AutoSell.Services.ReplicatedStorage:FindFirstChild("Assets")
+        if brainrotsFolder then
+            brainrotsFolder = brainrotsFolder:FindFirstChild("Brainrots")
+            if brainrotsFolder then
+                local brainrotModel = brainrotsFolder:FindFirstChild(baseName)
+                if brainrotModel then
+                    rarity = brainrotModel:GetAttribute("Rarity")
+                end
+            end
+        end
+    end)
+    
+    return rarity
+end
+
+-- Check if item should be kept (plants by name, brainrots by rarity)
+function AutoSell.ShouldKeepItem(itemName, itemTool)
+    -- Check plants by name (handles prefixes like [Gold])
     for _, keepName in ipairs(AutoSell.Settings.KeepPlants) do
         if itemName:find(keepName, 1, true) then
             return true
         end
     end
     
-    -- Check brainrots
-    for _, keepName in ipairs(AutoSell.Settings.KeepBrainrots) do
-        if itemName:find(keepName, 1, true) then
-            return true
+    -- Check brainrots by RARITY (not name)
+    if #AutoSell.Settings.KeepBrainrots > 0 then
+        local brainrotRarity = AutoSell.GetBrainrotRarity(itemName)
+        
+        if brainrotRarity then
+            for _, keepRarity in ipairs(AutoSell.Settings.KeepBrainrots) do
+                if brainrotRarity == keepRarity then
+                    return true
+                end
+            end
         end
     end
     
@@ -182,7 +229,7 @@ function AutoSell.FavoriteAllKeepItems()
     -- Check backpack
     if backpack then
         for _, tool in ipairs(backpack:GetChildren()) do
-            if tool:IsA("Tool") and AutoSell.ShouldKeepItem(tool.Name) then
+            if tool:IsA("Tool") and AutoSell.ShouldKeepItem(tool.Name, tool) then
                 table.insert(itemsToFavorite, tool)
             end
         end
@@ -191,7 +238,7 @@ function AutoSell.FavoriteAllKeepItems()
     -- Check character
     if character then
         for _, tool in ipairs(character:GetChildren()) do
-            if tool:IsA("Tool") and AutoSell.ShouldKeepItem(tool.Name) then
+            if tool:IsA("Tool") and AutoSell.ShouldKeepItem(tool.Name, tool) then
                 table.insert(itemsToFavorite, tool)
             end
         end
@@ -235,8 +282,8 @@ function AutoSell.OnItemAdded(tool)
     if not tool:IsA("Tool") then return end
     if not AutoSell.IsRunning or not AutoSell.Settings.AutoSellEnabled then return end
     
-    -- Check if we should keep this item
-    if AutoSell.ShouldKeepItem(tool.Name) then
+    -- Check if we should keep this item (pass tool for rarity checking)
+    if AutoSell.ShouldKeepItem(tool.Name, tool) then
         -- Favorite it immediately
         task.defer(function()
             task.wait(0.1)  -- Wait for ID to replicate
