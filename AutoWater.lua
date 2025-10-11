@@ -20,6 +20,7 @@ local AutoWater = {
     Settings = {
         AutoWaterEnabled = false,
         SelectedBucket = "Water Bucket", -- Default bucket
+        WateringInterval = 3, -- Water every 3 seconds
     },
     
     -- Dependencies
@@ -33,6 +34,7 @@ local AutoWater = {
     
     -- Event Connections
     SeedAddedConnection = nil,
+    WateringLoopRunning = false,
 }
 
 --[[
@@ -183,57 +185,88 @@ function AutoWater.WaterSeed(seedData)
     return success
 end
 
--- Water all owned seeds
+-- Water all owned seeds (single pass)
 function AutoWater.WaterAllSeeds()
     if not AutoWater.IsRunning or not AutoWater.Settings.AutoWaterEnabled then
         return
     end
     
-    task.spawn(function()
-        -- Find the bucket
-        local bucket = AutoWater.FindBucket(AutoWater.Settings.SelectedBucket)
-        
-        if not bucket then
-            print("[AutoWater] ⚠️ Bucket not found:", AutoWater.Settings.SelectedBucket)
-            return
-        end
-        
-        -- Equip bucket
+    -- Find the bucket
+    local bucket = AutoWater.FindBucket(AutoWater.Settings.SelectedBucket)
+    
+    if not bucket then
+        print("[AutoWater] ⚠️ Bucket not found:", AutoWater.Settings.SelectedBucket)
+        return
+    end
+    
+    -- Equip bucket if not already equipped
+    if AutoWater.CurrentBucket ~= bucket then
         local equipped = AutoWater.EquipBucket(bucket)
         if not equipped then
             warn("[AutoWater] ⚠️ Failed to equip bucket!")
             return
         end
-        
         print("[AutoWater] 💧 Bucket equipped:", bucket.Name)
+    end
+    
+    -- Get all owned seeds
+    local seeds = AutoWater.GetOwnedSeeds()
+    
+    if #seeds == 0 then
+        return 0
+    end
+    
+    -- Water each seed
+    local wateredCount = 0
+    for i, seedData in ipairs(seeds) do
+        if not AutoWater.IsRunning then break end
         
-        -- Get all owned seeds
-        local seeds = AutoWater.GetOwnedSeeds()
+        local success = AutoWater.WaterSeed(seedData)
         
-        if #seeds == 0 then
-            print("[AutoWater] ℹ️ No seeds to water")
-            return
+        if success then
+            wateredCount = wateredCount + 1
         end
         
-        print(string.format("[AutoWater] 💧 Watering %d seeds...", #seeds))
+        task.wait(0.1) -- Small delay between watering
+    end
+    
+    return wateredCount
+end
+
+-- Continuous watering loop
+function AutoWater.StartWateringLoop()
+    if AutoWater.WateringLoopRunning then return end
+    
+    AutoWater.WateringLoopRunning = true
+    
+    task.spawn(function()
+        print("[AutoWater] 🔄 Continuous watering started")
         
-        -- Water each seed
-        for i, seedData in ipairs(seeds) do
-            if not AutoWater.IsRunning then break end
+        while AutoWater.IsRunning and AutoWater.Settings.AutoWaterEnabled do
+            -- Get all owned seeds
+            local seeds = AutoWater.GetOwnedSeeds()
             
-            local success = AutoWater.WaterSeed(seedData)
-            
-            if success then
-                print(string.format("[AutoWater] ✅ Watered seed %d/%d", i, #seeds))
-            else
-                warn(string.format("[AutoWater] ❌ Failed to water seed %d/%d", i, #seeds))
+            if #seeds > 0 then
+                print(string.format("[AutoWater] 💧 Watering %d seeds...", #seeds))
+                local wateredCount = AutoWater.WaterAllSeeds()
+                
+                if wateredCount > 0 then
+                    print(string.format("[AutoWater] ✅ Watered %d seeds | Total: %d", wateredCount, AutoWater.TotalWatered))
+                end
             end
             
-            task.wait(0.1) -- Small delay between watering
+            -- Wait before next watering cycle
+            task.wait(AutoWater.Settings.WateringInterval)
         end
         
-        print("[AutoWater] 🎉 Finished watering! Total:", AutoWater.TotalWatered)
+        AutoWater.WateringLoopRunning = false
+        print("[AutoWater] 🔄 Continuous watering stopped")
     end)
+end
+
+-- Stop watering loop
+function AutoWater.StopWateringLoop()
+    AutoWater.WateringLoopRunning = false
 end
 
 -- Setup event listener for new seeds
@@ -244,7 +277,7 @@ function AutoWater.SetupEventListeners()
     countdowns = countdowns:FindFirstChild("Countdowns")
     if not countdowns then return end
     
-    -- Listen for new seeds added
+    -- Listen for new seeds added (immediate water, then loop handles rest)
     if not AutoWater.SeedAddedConnection then
         AutoWater.SeedAddedConnection = countdowns.ChildAdded:Connect(function(child)
             if not AutoWater.IsRunning then return end
@@ -257,7 +290,10 @@ function AutoWater.SetupEventListeners()
             -- Check if this seed belongs to us
             if owner == username then
                 print("[AutoWater] 📥 New seed detected:", child.Name)
-                AutoWater.WaterAllSeeds()
+                -- Immediate water, continuous loop will handle the rest
+                task.spawn(function()
+                    AutoWater.WaterAllSeeds()
+                end)
             end
         end)
     end
@@ -307,9 +343,10 @@ function AutoWater.Start()
     AutoWater.SetupEventListeners()
     
     print("[AutoWater] ▶️ Auto Water started with:", AutoWater.Settings.SelectedBucket)
+    print(string.format("[AutoWater] 🔄 Will water every %d seconds until seeds grow", AutoWater.Settings.WateringInterval))
     
-    -- Do initial watering
-    AutoWater.WaterAllSeeds()
+    -- Start continuous watering loop
+    AutoWater.StartWateringLoop()
     
     return true
 end
@@ -319,6 +356,9 @@ function AutoWater.Stop()
     
     AutoWater.IsRunning = false
     AutoWater.CurrentBucket = nil
+    
+    -- Stop watering loop
+    AutoWater.StopWateringLoop()
     
     -- Cleanup event listeners
     AutoWater.CleanupEventListeners()
