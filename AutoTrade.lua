@@ -21,11 +21,8 @@ local AutoTrade = {
     Settings = {
         AutoTradeEnabled = false,
         TargetPlayer = "",
-        ItemMode = "Brainrot",  -- "Brainrot" or "Plant"
-        FilterType = "Brainrot",  -- "Brainrot" or "Mutation" (for brainrots only)
-        PlantFilterType = "Name",  -- "Name" or "Mutation" (for plants only)
         SelectedBrainrot = "",
-        SelectedMutation = "",
+        SelectedBrainrotMutation = "",
         SelectedPlant = "",
         SelectedPlantMutation = "",
     },
@@ -183,41 +180,46 @@ function AutoTrade.GetPlantMutationList()
     return mutations
 end
 
--- Find matching item in character - Optimized
+-- Find matching item in backpack or character - Optimized
 function AutoTrade.FindMatchingItem()
     local character = AutoTrade.References.LocalPlayer.Character
-    if not character then return nil end
+    local backpack = AutoTrade.References.LocalPlayer:FindFirstChild("Backpack")
     
-    local itemMode = AutoTrade.Settings.ItemMode
+    if not character and not backpack then return nil end
     
-    -- Scan character for matching tool
-    for _, child in ipairs(character:GetChildren()) do
-        if child:IsA("Tool") then
-            local itemName = child.Name
-            
-            if itemMode == "Plant" then
-                -- Check mutation first (independent of plant name)
-                local mutation = AutoTrade.Settings.SelectedPlantMutation
-                if mutation ~= "" then
-                    -- Mutation is selected: Gift ANY plant with this mutation
-                    if itemName:find(mutation) then
-                        return child
-                    end
-                else
-                    -- No mutation selected: Gift by plant name
-                    local plantName = AutoTrade.Settings.SelectedPlant
-                    if plantName ~= "" and itemName == plantName then
-                        return child
-                    end
-                end
-            else
-                -- Brainrot mode
-                local filterType = AutoTrade.Settings.FilterType
-                local searchName = (filterType == "Mutation") 
-                    and AutoTrade.Settings.SelectedMutation 
-                    or AutoTrade.Settings.SelectedBrainrot
+    -- Check all selections (priority order: mutations first, then names)
+    local plantMutation = AutoTrade.Settings.SelectedPlantMutation
+    local brainrotMutation = AutoTrade.Settings.SelectedBrainrotMutation
+    local plantName = AutoTrade.Settings.SelectedPlant
+    local brainrotName = AutoTrade.Settings.SelectedBrainrot
+    
+    -- Scan both character and backpack
+    local locations = {}
+    if character then table.insert(locations, character) end
+    if backpack then table.insert(locations, backpack) end
+    
+    for _, location in ipairs(locations) do
+        for _, child in ipairs(location:GetChildren()) do
+            if child:IsA("Tool") then
+                local itemName = child.Name
                 
-                if searchName ~= "" and itemName:find(searchName) then
+                -- Priority 1: Plant Mutation (e.g., "Gold Pumpkin")
+                if plantMutation ~= "" and itemName:find(plantMutation) then
+                    return child
+                end
+                
+                -- Priority 2: Brainrot Mutation
+                if brainrotMutation ~= "" and itemName:find(brainrotMutation) then
+                    return child
+                end
+                
+                -- Priority 3: Plant Name (exact match)
+                if plantName ~= "" and itemName == plantName then
+                    return child
+                end
+                
+                -- Priority 4: Brainrot Name (substring match)
+                if brainrotName ~= "" and itemName:find(brainrotName) then
                     return child
                 end
             end
@@ -225,6 +227,26 @@ function AutoTrade.FindMatchingItem()
     end
     
     return nil
+end
+
+-- Move item to character if it's in backpack
+function AutoTrade.MoveToCharacter(item)
+    if not item then return false end
+    
+    local character = AutoTrade.References.LocalPlayer.Character
+    if not character then return false end
+    
+    -- If item is already in character, we're good
+    if item.Parent == character then
+        return true
+    end
+    
+    -- Move from backpack to character
+    local success = pcall(function()
+        item.Parent = character
+    end)
+    
+    return success
 end
 
 -- Gift item to player - Optimized
@@ -279,15 +301,26 @@ function AutoTrade.TradeLoop()
             local item = AutoTrade.FindMatchingItem()
             
             if item then
-                -- Gift the item
-                local success = AutoTrade.GiftItem(item, targetPlayer)
+                -- Move item to character first
+                local moved = AutoTrade.MoveToCharacter(item)
                 
-                if success then
-                    -- Wait briefly before next check
-                    task.wait(0.5)
+                if moved then
+                    -- Wait a moment for item to equip
+                    task.wait(0.1)
+                    
+                    -- Gift the item
+                    local success = AutoTrade.GiftItem(item, targetPlayer)
+                    
+                    if success then
+                        -- Wait briefly before next check
+                        task.wait(0.5)
+                    else
+                        -- Failed to gift, wait longer
+                        task.wait(2)
+                    end
                 else
-                    -- Failed to gift, wait longer
-                    task.wait(2)
+                    -- Failed to move item, wait and retry
+                    task.wait(1)
                 end
             else
                 -- No matching item found, wait before retry
@@ -312,26 +345,15 @@ function AutoTrade.Start()
         return false
     end
     
-    -- Validate item selection based on mode
-    if AutoTrade.Settings.ItemMode == "Plant" then
-        -- For plants: Check mutation first, then plant name
-        local mutation = AutoTrade.Settings.SelectedPlantMutation
-        local plantName = AutoTrade.Settings.SelectedPlant
-        
-        if mutation == "" and plantName == "" then
-            warn("[AutoTrade] ⚠️ Please select either a plant mutation or plant name!")
-            return false
-        end
-    else  -- Brainrot mode
-        local filterType = AutoTrade.Settings.FilterType
-        local itemName = (filterType == "Mutation") 
-            and AutoTrade.Settings.SelectedMutation 
-            or AutoTrade.Settings.SelectedBrainrot
-        
-        if itemName == "" then
-            warn("[AutoTrade] ⚠️ No brainrot/mutation selected!")
-            return false
-        end
+    -- Check if at least one item type is selected
+    local hasSelection = AutoTrade.Settings.SelectedPlantMutation ~= ""
+        or AutoTrade.Settings.SelectedBrainrotMutation ~= ""
+        or AutoTrade.Settings.SelectedPlant ~= ""
+        or AutoTrade.Settings.SelectedBrainrot ~= ""
+    
+    if not hasSelection then
+        warn("[AutoTrade] ⚠️ Please select at least one item to trade!")
+        return false
     end
     
     AutoTrade.IsRunning = true
@@ -355,26 +377,16 @@ end
 ]]
 
 function AutoTrade.GetStatus()
-    local selectedItem = ""
-    if AutoTrade.Settings.ItemMode == "Plant" then
-        if AutoTrade.Settings.PlantFilterType == "Mutation" then
-            selectedItem = AutoTrade.Settings.SelectedPlantMutation
-        else
-            selectedItem = AutoTrade.Settings.SelectedPlant
-        end
-    else
-        selectedItem = (AutoTrade.Settings.FilterType == "Mutation") 
-            and AutoTrade.Settings.SelectedMutation 
-            or AutoTrade.Settings.SelectedBrainrot
-    end
+    -- Show priority item (first one that's selected)
+    local selectedItem = AutoTrade.Settings.SelectedPlantMutation
+    if selectedItem == "" then selectedItem = AutoTrade.Settings.SelectedBrainrotMutation end
+    if selectedItem == "" then selectedItem = AutoTrade.Settings.SelectedPlant end
+    if selectedItem == "" then selectedItem = AutoTrade.Settings.SelectedBrainrot end
     
     return {
         IsRunning = AutoTrade.IsRunning,
         TotalGifts = AutoTrade.TotalGifts,
         TargetPlayer = AutoTrade.Settings.TargetPlayer,
-        ItemMode = AutoTrade.Settings.ItemMode,
-        FilterType = AutoTrade.Settings.FilterType,
-        PlantFilterType = AutoTrade.Settings.PlantFilterType,
         SelectedItem = selectedItem
     }
 end
