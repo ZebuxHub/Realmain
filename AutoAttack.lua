@@ -397,7 +397,21 @@ end
 
 function AutoAttack.AttackLoop()
     task.spawn(function()
-        print("[AutoAttack] 🔄 Attack loop started")
+        print("[AutoAttack] 🔄 Attack loop spawned")
+        print("[AutoAttack] IsRunning:", AutoAttack.IsRunning)
+        print("[AutoAttack] AutoAttackEnabled:", AutoAttack.Settings.AutoAttackEnabled)
+        
+        if not AutoAttack.IsRunning then
+            print("[AutoAttack] ❌ IsRunning is false, loop won't start!")
+            return
+        end
+        
+        if not AutoAttack.Settings.AutoAttackEnabled then
+            print("[AutoAttack] ❌ AutoAttackEnabled is false, loop won't start!")
+            return
+        end
+        
+        print("[AutoAttack] ✅ Starting loop...")
         
         while AutoAttack.IsRunning and AutoAttack.Settings.AutoAttackEnabled do
             print("[AutoAttack] --- Loop iteration ---")
