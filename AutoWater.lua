@@ -185,7 +185,7 @@ function AutoWater.WaterSeed(seedData)
     return success
 end
 
--- Water all owned seeds with all selected buckets (single pass)
+-- Water all owned seeds with all selected buckets
 function AutoWater.WaterAllSeeds()
     if not AutoWater.IsRunning or not AutoWater.Settings.AutoWaterEnabled then
         return 0
@@ -209,31 +209,26 @@ function AutoWater.WaterAllSeeds()
     for _, bucketName in ipairs(AutoWater.Settings.SelectedBuckets) do
         if not AutoWater.IsRunning then break end
         
+        -- Always find and equip bucket before each watering cycle
         local bucket = AutoWater.FindBucket(bucketName)
         
         if bucket then
-            -- Equip bucket if not already equipped
-            if AutoWater.CurrentBucket ~= bucket then
-                local equipped = AutoWater.EquipBucket(bucket)
-                if equipped then
-                    -- Water each seed with this bucket
-                    for _, seedData in ipairs(seeds) do
-                        if not AutoWater.IsRunning then break end
-                        
-                        if AutoWater.WaterSeed(seedData) then
-                            totalWatered = totalWatered + 1
-                        end
-                        
-                        task.wait(AutoWater.Settings.WateringDelay)
-                    end
-                end
-            else
-                -- Already equipped, just water
+            local equipped = AutoWater.EquipBucket(bucket)
+            if equipped then
+                AutoWater.CurrentBucket = bucket
+                
+                -- Water each seed with this bucket
                 for _, seedData in ipairs(seeds) do
                     if not AutoWater.IsRunning then break end
                     
-                    if AutoWater.WaterSeed(seedData) then
-                        totalWatered = totalWatered + 1
+                    -- Ensure bucket is still equipped before watering
+                    if AutoWater.CurrentBucket and AutoWater.CurrentBucket.Parent == AutoWater.References.LocalPlayer.Character then
+                        if AutoWater.WaterSeed(seedData) then
+                            totalWatered = totalWatered + 1
+                        end
+                    else
+                        -- Re-equip if lost
+                        AutoWater.EquipBucket(bucket)
                     end
                     
                     task.wait(AutoWater.Settings.WateringDelay)
@@ -243,6 +238,33 @@ function AutoWater.WaterAllSeeds()
     end
     
     return totalWatered
+end
+
+-- Continuous watering loop
+function AutoWater.StartWateringLoop()
+    if AutoWater.WateringLoopRunning then return end
+    
+    AutoWater.WateringLoopRunning = true
+    
+    task.spawn(function()
+        while AutoWater.IsRunning and AutoWater.Settings.AutoWaterEnabled do
+            local seeds = AutoWater.GetOwnedSeeds()
+            
+            if #seeds > 0 then
+                AutoWater.WaterAllSeeds()
+            end
+            
+            -- Wait 3 seconds between watering cycles
+            task.wait(3)
+        end
+        
+        AutoWater.WateringLoopRunning = false
+    end)
+end
+
+-- Stop watering loop
+function AutoWater.StopWateringLoop()
+    AutoWater.WateringLoopRunning = false
 end
 
 -- Setup event listener for new seeds (event-driven, no continuous loop)
@@ -312,13 +334,11 @@ function AutoWater.Start()
     AutoWater.IsRunning = true
     AutoWater.TotalWatered = 0
     
-    -- Setup event listeners (event-driven, no continuous loop)
+    -- Setup event listeners for immediate watering on new seeds
     AutoWater.SetupEventListeners()
     
-    -- Water immediately on start
-    task.spawn(function()
-        AutoWater.WaterAllSeeds()
-    end)
+    -- Start continuous watering loop
+    AutoWater.StartWateringLoop()
     
     return true
 end
@@ -329,8 +349,12 @@ function AutoWater.Stop()
     AutoWater.IsRunning = false
     AutoWater.CurrentBucket = nil
     
+    -- Stop watering loop
+    AutoWater.StopWateringLoop()
+    
     -- Cleanup event listeners
     AutoWater.CleanupEventListeners()
+    
     return true
 end
 
