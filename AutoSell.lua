@@ -317,7 +317,7 @@ function AutoSell.FavoriteAllKeepItems()
     return #itemsToFavorite
 end
 
--- Sell all non-favorited items
+-- Sell all non-favorited items (plants and brainrots)
 function AutoSell.SellAllItems()
     if not AutoSell.SellRemote then return false end
     
@@ -328,15 +328,23 @@ function AutoSell.SellAllItems()
         task.wait(0.2)
     end
     
-    -- Fire sell remote with required argument
-    local success = pcall(function()
+    -- Sell plants (with [2] = true argument)
+    pcall(function()
         local args = {
             [2] = true
         }
         AutoSell.SellRemote:FireServer(unpack(args, 1, table.maxn(args)))
     end)
     
-    return success
+    -- Small delay between calls
+    task.wait(0.1)
+    
+    -- Sell brainrots (no arguments)
+    pcall(function()
+        AutoSell.SellRemote:FireServer()
+    end)
+    
+    return true
 end
 
 --[[
