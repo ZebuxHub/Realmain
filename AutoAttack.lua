@@ -76,51 +76,30 @@ local function FormatNumber(num)
     end
 end
 
--- Equip weapon (Leather Grip Bat)
+-- Equip weapon (Leather Grip Bat) - Optimized
 function AutoAttack.EquipWeapon()
-    local success, weaponEquipped = pcall(function()
+    local success, result = pcall(function()
         local character = AutoAttack.References.LocalPlayer.Character
-        local backpack = AutoAttack.References.LocalPlayer:WaitForChild("Backpack")
+        if not character then return false end
         
-        if not character then 
-            print("[AutoAttack] ❌ EquipWeapon: No character")
-            return false 
-        end
+        local backpack = AutoAttack.References.LocalPlayer:FindFirstChild("Backpack")
+        if not backpack then return false end
         
-        -- Find Leather Grip Bat in backpack or character
-        local weapon = backpack:FindFirstChild("Leather Grip Bat") or character:FindFirstChild("Leather Grip Bat")
+        -- Check if already equipped (fast path)
+        local weapon = character:FindFirstChild("Leather Grip Bat")
+        if weapon then return true end
         
+        -- Find in backpack
+        weapon = backpack:FindFirstChild("Leather Grip Bat")
         if weapon and weapon:IsA("Tool") then
-            print("[AutoAttack] 🔫 Found weapon:", weapon.Name)
-            
-            -- Unequip other tools first
-            for _, tool in ipairs(character:GetChildren()) do
-                if tool:IsA("Tool") and tool ~= weapon then
-                    tool.Parent = backpack
-                end
-            end
-            
-            -- Equip weapon
-            if weapon.Parent ~= character then
-                weapon.Parent = character
-                print("[AutoAttack] ✅ Weapon equipped!")
-            else
-                print("[AutoAttack] ✅ Weapon already equipped")
-            end
-            
+            weapon.Parent = character
             return true
-        else
-            print("[AutoAttack] ❌ EquipWeapon: Leather Grip Bat not found in backpack or character!")
         end
         
         return false
     end)
     
-    if success and weaponEquipped then
-        return true
-    else
-        return false
-    end
+    return success and result
 end
 
 -- Get player's owned plot number
@@ -136,271 +115,160 @@ function AutoAttack.GetPlayerPlot()
     return nil
 end
 
--- Get all available targets from workspace.ScriptedMap.Brainrots (filter by Plot AND UserID)
+-- Get all available targets - Optimized for performance
 function AutoAttack.GetAllTargets()
     local targets = {}
-    
-    -- Get player's plot number
     local playerPlot = AutoAttack.GetPlayerPlot()
-    print("[AutoAttack] Player Plot:", playerPlot)
-    if not playerPlot then 
-        print("[AutoAttack] ❌ No plot number found!")
-        return targets 
-    end
+    if not playerPlot then return targets end
     
-    -- Get player's UserID
-    local playerUserID = AutoAttack.References.LocalPlayer.UserId
-    print("[AutoAttack] Player UserID:", playerUserID)
-    
-    pcall(function()
-        -- Scan workspace.ScriptedMap.Brainrots (global brainrot location)
+    local success = pcall(function()
         local scriptedMap = workspace:FindFirstChild("ScriptedMap")
-        if not scriptedMap then 
-            print("[AutoAttack] ❌ ScriptedMap not found in workspace")
-            return 
-        end
+        if not scriptedMap then return end
         
         local brainrots = scriptedMap:FindFirstChild("Brainrots")
-        if not brainrots then 
-            print("[AutoAttack] ❌ Brainrots folder not found in ScriptedMap")
-            return 
-        end
+        if not brainrots then return end
         
-        print("[AutoAttack] 🔍 Scanning workspace.ScriptedMap.Brainrots...")
-        local totalBrainrots = 0
-        local matchingBrainrots = 0
+        local playerPlotStr = tostring(playerPlot)
         
+        -- Optimized: Single pass, minimal allocations
         for _, brainrot in ipairs(brainrots:GetChildren()) do
             if brainrot:IsA("Model") then
-                totalBrainrots = totalBrainrots + 1
-                local id = brainrot.Name
-                local associatedPlayer = brainrot:GetAttribute("AssociatedPlayer")
-                local plot = brainrot:GetAttribute("Plot")
-                local health = brainrot:GetAttribute("Health") or 0
-                local maxHealth = brainrot:GetAttribute("MaxHealth") or 100
+                local health = brainrot:GetAttribute("Health")
                 
-                print(string.format("[AutoAttack] Found: %s | Plot: %s | AssociatedPlayer: %s | Health: %d/%d", 
-                    id, tostring(plot), tostring(associatedPlayer), health, maxHealth))
-                
-                -- Skip if health is 0 or below
-                if health <= 0 then
-                    print("[AutoAttack] ⏭️ Skipped (dead):", id)
-                    continue
-                end
-                
-                -- Check if Plot matches (AssociatedPlayer is nil/not used by game)
-                local plotMatches = (tostring(plot) == tostring(playerPlot))
-                
-                if plotMatches then
-                    matchingBrainrots = matchingBrainrots + 1
-                    print("[AutoAttack] ✅ VALID TARGET:", id, "| Plot matches!")
-                    table.insert(targets, {
-                        Model = brainrot,
-                        ID = id,
-                        PlayerID = associatedPlayer,
-                        Plot = plot,
-                        Health = health,
-                        MaxHealth = maxHealth,
-                        Position = brainrot:GetPivot().Position
-                    })
-                else
-                    print("[AutoAttack] ❌ Skipped (wrong plot):", id, "Expected:", playerPlot, "Got:", plot)
+                -- Fast rejection: Skip dead brainrots immediately
+                if health and health > 0 then
+                    local plot = brainrot:GetAttribute("Plot")
+                    
+                    -- Only process if plot matches
+                    if tostring(plot) == playerPlotStr then
+                        targets[#targets + 1] = {
+                            Model = brainrot,
+                            ID = brainrot.Name,
+                            Health = health,
+                            MaxHealth = brainrot:GetAttribute("MaxHealth") or 100
+                        }
+                    end
                 end
             end
         end
-        
-        print(string.format("[AutoAttack] 📊 Total: %d | Matching: %d | Valid: %d", 
-            totalBrainrots, matchingBrainrots, #targets))
     end)
     
     return targets
 end
 
--- Select best target based on mode
+-- Select best target - Optimized
 function AutoAttack.SelectTarget()
-    print("[AutoAttack] 🎯 SelectTarget() called")
     local targets = AutoAttack.GetAllTargets()
-    
-    if #targets == 0 then
-        print("[AutoAttack] ❌ No targets available")
-        return nil
-    end
+    if #targets == 0 then return nil end
     
     local mode = AutoAttack.Settings.TargetMode
-    local healthMode = AutoAttack.Settings.HealthMode
-    print("[AutoAttack] Mode:", mode, "| Health Mode:", healthMode)
     
-    -- Random mode
+    -- Random mode (fastest)
     if mode == "Random" then
-        local selected = targets[math.random(1, #targets)]
-        print("[AutoAttack] ✅ Selected (Random):", selected.ID)
-        return selected
+        return targets[math.random(1, #targets)]
     end
     
-    -- Sort by health (use Current or Max health based on setting)
-    table.sort(targets, function(a, b)
-        local aValue = (healthMode == "Max") and a.MaxHealth or a.Health
-        local bValue = (healthMode == "Max") and b.MaxHealth or b.Health
+    -- Health-based selection (optimized: single pass for min/max)
+    local healthMode = AutoAttack.Settings.HealthMode
+    local bestTarget = targets[1]
+    local bestValue = (healthMode == "Max") and bestTarget.MaxHealth or bestTarget.Health
+    
+    for i = 2, #targets do
+        local target = targets[i]
+        local value = (healthMode == "Max") and target.MaxHealth or target.Health
         
         if mode == "HighHP" then
-            return aValue > bValue  -- Highest first
+            if value > bestValue then
+                bestTarget = target
+                bestValue = value
+            end
         else  -- LowHP
-            return aValue < bValue  -- Lowest first
+            if value < bestValue then
+                bestTarget = target
+                bestValue = value
+            end
         end
-    end)
+    end
     
-    print("[AutoAttack] ✅ Selected (" .. mode .. "):", targets[1].ID)
-    return targets[1]
+    return bestTarget
 end
 
--- Move to target based on movement mode (returns current distance)
+-- Move to target - Optimized
 function AutoAttack.MoveToTarget(target)
-    if not target or not target.Model then 
-        print("[AutoAttack] ❌ MoveToTarget: Invalid target")
-        return math.huge 
-    end
+    if not target or not target.Model then return math.huge end
     
     local character = AutoAttack.References.LocalPlayer.Character
-    if not character then 
-        print("[AutoAttack] ❌ MoveToTarget: No character")
-        return math.huge 
-    end
+    if not character then return math.huge end
     
-    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
-    if not humanoidRootPart then 
-        print("[AutoAttack] ❌ MoveToTarget: No HumanoidRootPart")
-        return math.huge 
-    end
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return math.huge end
     
-    -- Get LIVE position from model
-    local targetPosition = target.Model:GetPivot().Position
-    local distance = (humanoidRootPart.Position - targetPosition).Magnitude
+    local targetPos = target.Model:GetPivot().Position
+    local distance = (hrp.Position - targetPos).Magnitude
     
-    print(string.format("[AutoAttack] 📏 Distance to %s: %.2f studs", target.ID, distance))
+    -- Already in range
+    if distance <= 5 then return distance end
     
-    -- Already in attack range (within 5 studs)
-    if distance <= 5 then
-        print("[AutoAttack] ✅ In attack range! (%.2f studs)", distance)
-        return distance
-    end
+    -- Move based on mode
+    local mode = AutoAttack.Settings.MovementMode
     
-    local movementMode = AutoAttack.Settings.MovementMode
-    print("[AutoAttack] 🚶 Moving (" .. movementMode .. ") to target...")
-    
-    if movementMode == "TP" then
-        -- Teleport close to target (3 studs away for safety)
+    if mode == "TP" then
         pcall(function()
-            local direction = (targetPosition - humanoidRootPart.Position).Unit
-            local offset = direction * 3  -- Stand 3 studs away
-            humanoidRootPart.CFrame = CFrame.new(targetPosition - offset)
-            print("[AutoAttack] ⚡ Teleported to target")
+            local dir = (targetPos - hrp.Position).Unit
+            hrp.CFrame = CFrame.new(targetPos - dir * 3)
         end)
-        
-    elseif movementMode == "Tween" then
-        -- Quick tween to target
+    elseif mode == "Tween" then
         local TweenService = game:GetService("TweenService")
-        local tweenInfo = TweenInfo.new(
-            0.3,  -- Fast tween (0.3 seconds)
-            Enum.EasingStyle.Linear,
-            Enum.EasingDirection.InOut
-        )
-        
-        local direction = (targetPosition - humanoidRootPart.Position).Unit
-        local offset = direction * 3  -- Stand 3 studs away
-        local tween = TweenService:Create(
-            humanoidRootPart,
-            tweenInfo,
-            {CFrame = CFrame.new(targetPosition - offset)}
-        )
-        
+        local dir = (targetPos - hrp.Position).Unit
+        local tween = TweenService:Create(hrp, TweenInfo.new(0.3, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos - dir * 3)})
         tween:Play()
-        print("[AutoAttack] 🎬 Tweening to target")
-        
-    elseif movementMode == "Walk" then
-        -- Use Humanoid to walk
+    elseif mode == "Walk" then
         local humanoid = character:FindFirstChild("Humanoid")
-        if humanoid then
-            humanoid:MoveTo(targetPosition)
-            print("[AutoAttack] 🚶 Walking to target")
-        end
+        if humanoid then humanoid:MoveTo(targetPos) end
     end
     
-    -- Return current distance
-    local newDistance = (humanoidRootPart.Position - targetPosition).Magnitude
-    print(string.format("[AutoAttack] 📏 New distance: %.2f studs", newDistance))
-    return newDistance
+    return (hrp.Position - targetPos).Magnitude
 end
 
--- Attack target
+-- Attack target - Optimized
 function AutoAttack.AttackTarget(target)
-    if not target or not target.ID then 
-        print("[AutoAttack] ❌ AttackTarget: Invalid target")
-        return false 
-    end
-    
-    print("[AutoAttack] ⚔️ Attacking:", target.ID)
+    if not target or not target.ID then return false end
     
     local success = pcall(function()
-        local args = {
-            [1] = {
-                [1] = target.ID
-            }
-        }
-        
-        print("[AutoAttack] 🔥 Firing WeaponAttack remote...")
-        AutoAttack.Services.ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("AttacksServer"):WaitForChild("WeaponAttack"):FireServer(unpack(args))
-        print("[AutoAttack] ✅ Attack fired!")
+        AutoAttack.Services.ReplicatedStorage
+            :WaitForChild("Remotes")
+            :WaitForChild("AttacksServer")
+            :WaitForChild("WeaponAttack")
+            :FireServer({{target.ID}})
     end)
     
     if success then
         AutoAttack.TotalAttacks = AutoAttack.TotalAttacks + 1
-        print("[AutoAttack] 📊 Total attacks:", AutoAttack.TotalAttacks)
-    else
-        print("[AutoAttack] ❌ Attack failed!")
     end
     
     return success
 end
 
--- Check if target is still valid (alive and exists)
+-- Check if target is valid - Optimized
 function AutoAttack.IsTargetValid(target)
     if not target or not target.Model then return false end
-    
-    -- Check if model still exists in workspace
     if not target.Model.Parent then return false end
     
-    -- Check if model is still in Brainrots folder
-    local parent = target.Model.Parent
-    if not parent or parent.Name ~= "Brainrots" then return false end
-    
-    -- Check if health > 0 (CRITICAL: dead = switch target immediately)
-    local currentHealth = target.Model:GetAttribute("Health")
-    if not currentHealth or currentHealth <= 0 then return false end
-    
-    return true
+    local health = target.Model:GetAttribute("Health")
+    return health and health > 0
 end
 
--- Monitor target's health attribute for instant death detection
+-- Monitor target health - Optimized
 function AutoAttack.MonitorTargetHealth(target)
-    -- Disconnect previous monitor
     if AutoAttack.HealthMonitorConnection then
         AutoAttack.HealthMonitorConnection:Disconnect()
-        AutoAttack.HealthMonitorConnection = nil
     end
     
     if not target or not target.Model then return end
     
-    -- Listen for Health attribute changes
     AutoAttack.HealthMonitorConnection = target.Model:GetAttributeChangedSignal("Health"):Connect(function()
-        local health = target.Model:GetAttribute("Health") or 0
-        
-        -- Target died! Clear it immediately
-        if health <= 0 then
-            if AutoAttack.CurrentTarget == target then
-                AutoAttack.CurrentTarget = nil
-            end
-            
-            -- Disconnect this monitor
+        if (target.Model:GetAttribute("Health") or 0) <= 0 then
+            AutoAttack.CurrentTarget = nil
             if AutoAttack.HealthMonitorConnection then
                 AutoAttack.HealthMonitorConnection:Disconnect()
                 AutoAttack.HealthMonitorConnection = nil
@@ -415,92 +283,45 @@ end
     ========================================
 ]]
 
+-- Main attack loop - Highly optimized
 function AutoAttack.AttackLoop()
     task.spawn(function()
-        print("[AutoAttack] 🔄 Attack loop spawned")
-        print("[AutoAttack] IsRunning:", AutoAttack.IsRunning)
-        print("[AutoAttack] AutoAttackEnabled:", AutoAttack.Settings.AutoAttackEnabled)
-        
-        if not AutoAttack.IsRunning then
-            print("[AutoAttack] ❌ IsRunning is false, loop won't start!")
-            return
-        end
-        
-        if not AutoAttack.Settings.AutoAttackEnabled then
-            print("[AutoAttack] ❌ AutoAttackEnabled is false, loop won't start!")
-            return
-        end
-        
-        print("[AutoAttack] ✅ Starting loop...")
-        
         while AutoAttack.IsRunning and AutoAttack.Settings.AutoAttackEnabled do
-            print("[AutoAttack] --- Loop iteration ---")
-            
-            -- Ensure weapon is equipped
+            -- Equip weapon (fast path if already equipped)
             AutoAttack.EquipWeapon()
             
-            -- Select target (only choose new target if current is invalid)
+            -- Get or refresh target
             if not AutoAttack.IsTargetValid(AutoAttack.CurrentTarget) then
-                print("[AutoAttack] 🔍 Need new target...")
                 local newTarget = AutoAttack.SelectTarget()
                 AutoAttack.CurrentTarget = newTarget
-                
-                -- Start monitoring new target's health for instant death detection
                 if newTarget then
-                    print("[AutoAttack] 📡 Monitoring target health:", newTarget.ID)
                     AutoAttack.MonitorTargetHealth(newTarget)
                 end
-            else
-                print("[AutoAttack] ✅ Current target still valid:", AutoAttack.CurrentTarget.ID)
             end
             
             local target = AutoAttack.CurrentTarget
             
             if target then
-                -- Double-check target is still valid BEFORE moving
+                -- Validate before action
                 if not AutoAttack.IsTargetValid(target) then
-                    print("[AutoAttack] ❌ Target invalid before movement")
                     AutoAttack.CurrentTarget = nil
-                    continue  -- Skip to next iteration to find new target
+                    continue
                 end
                 
-                -- CONTINUOUSLY move to target (stick to it)
+                -- Move and attack
                 local distance = AutoAttack.MoveToTarget(target)
                 
-                -- Check if target died/disappeared during movement
-                if not AutoAttack.IsTargetValid(target) then
-                    print("[AutoAttack] ❌ Target died during movement")
-                    AutoAttack.CurrentTarget = nil
-                    continue  -- Immediately find new target (no wait)
-                end
-                
-                -- Attack if within 1 stud
-                if distance <= 5 then
+                if AutoAttack.IsTargetValid(target) and distance <= 5 then
                     AutoAttack.AttackTarget(target)
-                    
-                    -- Check IMMEDIATELY after attack if target is still alive
-                    if not AutoAttack.IsTargetValid(target) then
-                        print("[AutoAttack] ☠️ Target died from attack!")
-                        AutoAttack.CurrentTarget = nil
-                        continue  -- Target died, find new one NOW
-                    end
-                    
-                    -- Wait between attacks (fast spam if interval is low)
                     task.wait(AutoAttack.Settings.AttackInterval)
                 else
-                    print("[AutoAttack] ⏳ Not in range yet, waiting 0.1s...")
-                    -- Not in range yet, keep moving (check more frequently)
                     task.wait(0.1)
                 end
             else
-                -- No targets available, wait and search again
-                print("[AutoAttack] ⏳ No targets, waiting 1s...")
-                AutoAttack.CurrentTarget = nil
+                -- No targets, check less frequently
                 task.wait(1)
             end
         end
-        
-        print("[AutoAttack] 🛑 Attack loop ended")
     end)
 end
 
@@ -511,42 +332,24 @@ end
 ]]
 
 function AutoAttack.Start()
-    if AutoAttack.IsRunning then
-        print("[AutoAttack] ⚠️ Already running!")
-        return false
-    end
-    
-    print("[AutoAttack] 🟢 STARTING AUTO ATTACK SYSTEM")
-    print("[AutoAttack] Settings:")
-    print("  - Target Mode:", AutoAttack.Settings.TargetMode)
-    print("  - Movement Mode:", AutoAttack.Settings.MovementMode)
-    print("  - Health Mode:", AutoAttack.Settings.HealthMode)
-    print("  - Attack Interval:", AutoAttack.Settings.AttackInterval)
+    if AutoAttack.IsRunning then return false end
     
     AutoAttack.IsRunning = true
     AutoAttack.TotalAttacks = 0
     
-    -- Equip weapon immediately
-    print("[AutoAttack] 🔫 Equipping weapon...")
     AutoAttack.EquipWeapon()
-    
-    -- Start attack loop
-    print("[AutoAttack] 🔄 Starting attack loop...")
     AutoAttack.AttackLoop()
     
-    -- Monitor weapon unequip (re-equip if needed)
     local character = AutoAttack.References.LocalPlayer.Character
     if character then
         AutoAttack.EquippedConnection = character.ChildRemoved:Connect(function(child)
             if child.Name == "Leather Grip Bat" and AutoAttack.IsRunning then
-                print("[AutoAttack] 🔫 Weapon unequipped, re-equipping...")
                 task.wait(0.1)
                 AutoAttack.EquipWeapon()
             end
         end)
     end
     
-    print("[AutoAttack] ✅ Auto Attack system started!")
     return true
 end
 
