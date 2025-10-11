@@ -163,11 +163,8 @@ function AutoTrade.GetPlantMutationList()
         if mutationModule then
             local mutationData = require(mutationModule)
             if mutationData and mutationData.Colors then
-                for mutationName, data in pairs(mutationData.Colors) do
-                    -- Skip "Normal" if it has DontShow flag
-                    if not data.DontShow then
-                        mutations[#mutations + 1] = mutationName
-                    end
+                for mutationName, _ in pairs(mutationData.Colors) do
+                    mutations[#mutations + 1] = mutationName
                 end
             end
         end
@@ -229,25 +226,6 @@ function AutoTrade.FindMatchingItem()
     return nil
 end
 
--- Move item to character if it's in backpack
-function AutoTrade.MoveToCharacter(item)
-    if not item then return false end
-    
-    local character = AutoTrade.References.LocalPlayer.Character
-    if not character then return false end
-    
-    -- If item is already in character, we're good
-    if item.Parent == character then
-        return true
-    end
-    
-    -- Move from backpack to character
-    local success = pcall(function()
-        item.Parent = character
-    end)
-    
-    return success
-end
 
 -- Gift item to player - Optimized
 function AutoTrade.GiftItem(item, targetPlayer)
@@ -301,26 +279,15 @@ function AutoTrade.TradeLoop()
             local item = AutoTrade.FindMatchingItem()
             
             if item then
-                -- Move item to character first
-                local moved = AutoTrade.MoveToCharacter(item)
+                -- Try to gift the item directly (from backpack or character)
+                local success = AutoTrade.GiftItem(item, targetPlayer)
                 
-                if moved then
-                    -- Wait a moment for item to equip
-                    task.wait(0.1)
-                    
-                    -- Gift the item
-                    local success = AutoTrade.GiftItem(item, targetPlayer)
-                    
-                    if success then
-                        -- Wait briefly before next check
-                        task.wait(0.5)
-                    else
-                        -- Failed to gift, wait longer
-                        task.wait(2)
-                    end
+                if success then
+                    -- Wait briefly before next check
+                    task.wait(0.5)
                 else
-                    -- Failed to move item, wait and retry
-                    task.wait(1)
+                    -- Failed to gift, wait longer
+                    task.wait(2)
                 end
             else
                 -- No matching item found, wait before retry
