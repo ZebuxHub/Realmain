@@ -15,7 +15,8 @@ local AutoSell = {
     Settings = {
         AutoSellEnabled = false,
         KeepPlants = {},  -- Array of plant names to keep
-        KeepBrainrots = {},  -- Array of brainrot names to keep
+        KeepBrainrots = {},  -- Array of brainrot rarities to keep
+        MinPlantDamage = 0,  -- Minimum damage for plants (0 = disabled)
     },
     
     -- Dependencies
@@ -153,11 +154,50 @@ function AutoSell.GetBrainrotRarity(toolName)
     return rarity
 end
 
--- Check if item should be kept (plants by name, brainrots by rarity)
-function AutoSell.ShouldKeepItem(itemName, itemTool)
-    -- Check plants by name (handles prefixes like [Gold])
+-- Get plant damage from tool
+function AutoSell.GetPlantDamage(tool)
+    if not tool then return 0 end
+    
+    -- Try to get Damage attribute from tool
+    local damage = tool:GetAttribute("Damage")
+    if damage then return damage end
+    
+    -- Try to get from Handle
+    pcall(function()
+        local handle = tool:FindFirstChild("Handle")
+        if handle then
+            damage = handle:GetAttribute("Damage")
+        end
+    end)
+    
+    return damage or 0
+end
+
+-- Check if plant name matches keep list
+function AutoSell.IsPlantInKeepList(itemName)
     for _, keepName in ipairs(AutoSell.Settings.KeepPlants) do
         if itemName:find(keepName, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Check if item should be kept (plants by name + damage, brainrots by rarity)
+function AutoSell.ShouldKeepItem(itemName, itemTool)
+    -- Check plants by name (handles prefixes like [Gold])
+    if AutoSell.IsPlantInKeepList(itemName) then
+        -- If MinPlantDamage is set, also check damage
+        if AutoSell.Settings.MinPlantDamage > 0 then
+            local damage = AutoSell.GetPlantDamage(itemTool)
+            -- Only keep if damage >= MinPlantDamage
+            if damage >= AutoSell.Settings.MinPlantDamage then
+                return true
+            end
+            -- Plant matches name but damage too low
+            return false
+        else
+            -- No damage filter, keep all matching plants
             return true
         end
     end
