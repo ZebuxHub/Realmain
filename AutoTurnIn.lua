@@ -191,8 +191,12 @@ function AutoTurnIn.FindWantedBrainrot(wantedName)
     -- Check character first
     if character then
         for _, child in ipairs(character:GetChildren()) do
-            if child:IsA("Tool") and child.Name == wantedName then
-                return child
+            if child:IsA("Tool") then
+                -- Check exact match or if the tool name contains the wanted name
+                -- (handles cases like "[19.2 kg] Orcalero Orcala" matching "Orcalero Orcala")
+                if child.Name == wantedName or child.Name:find(wantedName, 1, true) then
+                    return child
+                end
             end
         end
     end
@@ -200,8 +204,11 @@ function AutoTurnIn.FindWantedBrainrot(wantedName)
     -- Check backpack
     if backpack then
         for _, child in ipairs(backpack:GetChildren()) do
-            if child:IsA("Tool") and child.Name == wantedName then
-                return child
+            if child:IsA("Tool") then
+                -- Check exact match or if the tool name contains the wanted name
+                if child.Name == wantedName or child.Name:find(wantedName, 1, true) then
+                    return child
+                end
             end
         end
     end
