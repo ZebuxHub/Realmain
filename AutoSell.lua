@@ -183,33 +183,56 @@ function AutoSell.IsPlantInKeepList(itemName)
     return false
 end
 
+-- Determine if item is a plant or brainrot by checking ReplicatedStorage
+function AutoSell.IsPlant(itemName)
+    local baseName = AutoSell.GetBaseName(itemName)
+    
+    local found = false
+    pcall(function()
+        local plantsFolder = AutoSell.Services.ReplicatedStorage:FindFirstChild("Assets")
+        if plantsFolder then
+            plantsFolder = plantsFolder:FindFirstChild("Plants")
+            if plantsFolder and plantsFolder:FindFirstChild(baseName) then
+                found = true
+            end
+        end
+    end)
+    
+    return found
+end
+
 -- Check if item should be kept (plants by name + damage, brainrots by rarity)
 function AutoSell.ShouldKeepItem(itemName, itemTool)
-    -- Check plants by name (handles prefixes like [Gold])
-    if AutoSell.IsPlantInKeepList(itemName) then
-        -- If MinPlantDamage is set, also check damage
-        if AutoSell.Settings.MinPlantDamage > 0 then
-            local damage = AutoSell.GetPlantDamage(itemTool)
-            -- Only keep if damage >= MinPlantDamage
-            if damage >= AutoSell.Settings.MinPlantDamage then
+    -- First, determine if this is a plant or brainrot
+    local isPlant = AutoSell.IsPlant(itemName)
+    
+    if isPlant then
+        -- PLANT: Check by name + optional damage filter
+        if AutoSell.IsPlantInKeepList(itemName) then
+            -- If MinPlantDamage is set, also check damage
+            if AutoSell.Settings.MinPlantDamage > 0 then
+                local damage = AutoSell.GetPlantDamage(itemTool)
+                -- Only keep if damage >= MinPlantDamage
+                if damage >= AutoSell.Settings.MinPlantDamage then
+                    return true
+                end
+                -- Plant matches name but damage too low
+                return false
+            else
+                -- No damage filter, keep all matching plants
                 return true
             end
-            -- Plant matches name but damage too low
-            return false
-        else
-            -- No damage filter, keep all matching plants
-            return true
         end
-    end
-    
-    -- Check brainrots by RARITY (not name)
-    if #AutoSell.Settings.KeepBrainrots > 0 then
-        local brainrotRarity = AutoSell.GetBrainrotRarity(itemName)
-        
-        if brainrotRarity then
-            for _, keepRarity in ipairs(AutoSell.Settings.KeepBrainrots) do
-                if brainrotRarity == keepRarity then
-                    return true
+    else
+        -- BRAINROT: Check by RARITY (not name)
+        if #AutoSell.Settings.KeepBrainrots > 0 then
+            local brainrotRarity = AutoSell.GetBrainrotRarity(itemName)
+            
+            if brainrotRarity then
+                for _, keepRarity in ipairs(AutoSell.Settings.KeepBrainrots) do
+                    if brainrotRarity == keepRarity then
+                        return true
+                    end
                 end
             end
         end
