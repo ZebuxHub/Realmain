@@ -13,7 +13,8 @@ local AutoSell = {
     
     -- Settings
     Settings = {
-        AutoSellEnabled = false,
+        AutoFavoriteEnabled = false,  -- Separate toggle for auto-favoriting
+        AutoSellEnabled = false,  -- Separate toggle for auto-selling
         KeepPlants = {},  -- Array of plant names to keep
         KeepBrainrots = {},  -- Array of brainrot rarities to keep
         MinPlantDamage = 0,  -- Minimum damage for plants (0 = disabled)
@@ -343,17 +344,21 @@ end
 -- Handle new item added to backpack
 function AutoSell.OnItemAdded(tool)
     if not tool:IsA("Tool") then return end
-    if not AutoSell.IsRunning or not AutoSell.Settings.AutoSellEnabled then return end
+    if not AutoSell.IsRunning then return end
     
     -- Check if we should keep this item (pass tool for rarity checking)
-    if AutoSell.ShouldKeepItem(tool.Name, tool) then
-        -- Favorite it immediately
+    local shouldKeep = AutoSell.ShouldKeepItem(tool.Name, tool)
+    
+    -- Auto Favorite: Favorite matching items
+    if AutoSell.Settings.AutoFavoriteEnabled and shouldKeep then
         task.defer(function()
             task.wait(0.1)  -- Wait for ID to replicate
             AutoSell.FavoriteItem(tool)
         end)
-    else
-        -- It's not in keep list, sell after a short delay
+    end
+    
+    -- Auto Sell: Sell non-matching items
+    if AutoSell.Settings.AutoSellEnabled and not shouldKeep then
         task.defer(function()
             task.wait(0.5)  -- Wait a bit to ensure all favorites are processed
             AutoSell.SellAllItems()
@@ -410,8 +415,13 @@ function AutoSell.Start()
     if AutoSell.IsRunning then return false end
     
     -- Validate remotes
-    if not AutoSell.FavoriteRemote or not AutoSell.SellRemote then
+    if not AutoSell.FavoriteRemote then
         return false
+    end
+    
+    -- Validate that at least one feature is enabled
+    if not AutoSell.Settings.AutoFavoriteEnabled and not AutoSell.Settings.AutoSellEnabled then
+        return false  -- Must have at least one toggle enabled
     end
     
     -- Validate settings
@@ -425,10 +435,12 @@ function AutoSell.Start()
     -- Setup event listeners
     AutoSell.SetupEventListeners()
     
-    -- Immediately favorite all current keep items
-    task.spawn(function()
-        AutoSell.FavoriteAllKeepItems()
-    end)
+    -- Immediately favorite all current keep items (if Auto Favorite is enabled)
+    if AutoSell.Settings.AutoFavoriteEnabled then
+        task.spawn(function()
+            AutoSell.FavoriteAllKeepItems()
+        end)
+    end
     
     return true
 end
