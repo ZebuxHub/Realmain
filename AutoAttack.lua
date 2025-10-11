@@ -10,8 +10,9 @@
     - Health-based targeting (Current or Max)
     
     Security:
-    - Plot filter: workspace.Plots[YourPlot].Brainrots
-    - UserID filter: AssociatedPlayer == LocalPlayer.UserId
+    - Scans: workspace.ScriptedMap.Brainrots (global location)
+    - Plot filter: brainrot:GetAttribute("Plot") == YourPlot
+    - UserID filter: brainrot:GetAttribute("AssociatedPlayer") == LocalPlayer.UserId
 ]]
 
 local AutoAttack = {
@@ -121,7 +122,7 @@ function AutoAttack.GetPlayerPlot()
     return nil
 end
 
--- Get all available targets from workspace (only in player's plot AND matching player's UserID)
+-- Get all available targets from workspace.ScriptedMap.Brainrots (filter by Plot AND UserID)
 function AutoAttack.GetAllTargets()
     local targets = {}
     
@@ -138,20 +139,20 @@ function AutoAttack.GetAllTargets()
     print("[AutoAttack] Player UserID:", playerUserID)
     
     pcall(function()
-        -- Get brainrots in player's plot
-        local plot = workspace.Plots:FindFirstChild(playerPlot)
-        if not plot then 
-            print("[AutoAttack] ❌ Plot folder not found:", playerPlot)
+        -- Scan workspace.ScriptedMap.Brainrots (global brainrot location)
+        local scriptedMap = workspace:FindFirstChild("ScriptedMap")
+        if not scriptedMap then 
+            print("[AutoAttack] ❌ ScriptedMap not found in workspace")
             return 
         end
         
-        local brainrots = plot:FindFirstChild("Brainrots")
+        local brainrots = scriptedMap:FindFirstChild("Brainrots")
         if not brainrots then 
-            print("[AutoAttack] ❌ Brainrots folder not found in plot")
+            print("[AutoAttack] ❌ Brainrots folder not found in ScriptedMap")
             return 
         end
         
-        print("[AutoAttack] 🔍 Scanning Brainrots folder...")
+        print("[AutoAttack] 🔍 Scanning workspace.ScriptedMap.Brainrots...")
         local totalBrainrots = 0
         local matchingBrainrots = 0
         
@@ -160,11 +161,12 @@ function AutoAttack.GetAllTargets()
                 totalBrainrots = totalBrainrots + 1
                 local id = brainrot.Name
                 local associatedPlayer = brainrot:GetAttribute("AssociatedPlayer")
+                local plot = brainrot:GetAttribute("Plot")
                 local health = brainrot:GetAttribute("Health") or 0
                 local maxHealth = brainrot:GetAttribute("MaxHealth") or 100
                 
-                print(string.format("[AutoAttack] Found: %s | AssociatedPlayer: %s | Health: %d/%d", 
-                    id, tostring(associatedPlayer), health, maxHealth))
+                print(string.format("[AutoAttack] Found: %s | Plot: %s | AssociatedPlayer: %s | Health: %d/%d", 
+                    id, tostring(plot), tostring(associatedPlayer), health, maxHealth))
                 
                 -- Skip if health is 0 or below
                 if health <= 0 then
@@ -172,21 +174,29 @@ function AutoAttack.GetAllTargets()
                     continue
                 end
                 
-                -- CRITICAL: Only target brainrots where AssociatedPlayer == My UserID
-                -- This ensures we only attack OUR OWN brainrots in OUR plot
-                if associatedPlayer == playerUserID then
+                -- CRITICAL: Must match BOTH Plot AND UserID
+                local plotMatches = (tostring(plot) == tostring(playerPlot))
+                local userMatches = (associatedPlayer == playerUserID)
+                
+                if plotMatches and userMatches then
                     matchingBrainrots = matchingBrainrots + 1
                     print("[AutoAttack] ✅ VALID TARGET:", id)
                     table.insert(targets, {
                         Model = brainrot,
                         ID = id,
                         PlayerID = associatedPlayer,
+                        Plot = plot,
                         Health = health,
                         MaxHealth = maxHealth,
                         Position = brainrot:GetPivot().Position
                     })
                 else
-                    print("[AutoAttack] ❌ Skipped (wrong UserID):", id, "Expected:", playerUserID, "Got:", associatedPlayer)
+                    if not plotMatches then
+                        print("[AutoAttack] ❌ Skipped (wrong plot):", id, "Expected:", playerPlot, "Got:", plot)
+                    end
+                    if not userMatches then
+                        print("[AutoAttack] ❌ Skipped (wrong UserID):", id, "Expected:", playerUserID, "Got:", associatedPlayer)
+                    end
                 end
             end
         end
