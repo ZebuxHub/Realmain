@@ -21,7 +21,6 @@ local AutoTurnIn = {
     -- Settings
     Settings = {
         AutoTurnInEnabled = false,
-        CheckInterval = 2, -- Check every 2 seconds
     },
     
     -- Dependencies
@@ -31,9 +30,11 @@ local AutoTurnIn = {
     
     -- Cached Data
     TurnInRemote = nil,
-    EventTrackModule = nil,
-    PlayerDataModule = nil,
-    BrainrotRegistry = nil,
+    
+    -- Event Connections
+    BackpackConnection = nil,
+    CharacterConnection = nil,
+    SuccessConnection = nil,
 }
 
 --[[
@@ -75,13 +76,19 @@ function AutoTurnIn.Init(services, references, brain)
         end
     end)
     
-    -- Listen for turn in success to increment index
+    -- Listen for turn in success to increment index and trigger next check
     if AutoTurnIn.TurnInRemote then
-        AutoTurnIn.TurnInRemote.OnClientEvent:Connect(function(eventType, data)
+        AutoTurnIn.SuccessConnection = AutoTurnIn.TurnInRemote.OnClientEvent:Connect(function(eventType, data)
             if eventType == "Success" and data and data.GoalStage then
                 -- Update our progress
                 AutoTurnIn.CurrentIndex = data.GoalStage + 1
                 print("[AutoTurnIn] 🎉 Progress updated! Now on wanted #" .. AutoTurnIn.CurrentIndex)
+                
+                -- Trigger next check if auto turn in is enabled
+                if AutoTurnIn.IsRunning and AutoTurnIn.Settings.AutoTurnInEnabled then
+                    task.wait(1) -- Wait a moment for things to settle
+                    AutoTurnIn.CheckAndTurnIn()
+                end
             end
         end)
     end
@@ -259,100 +266,108 @@ end
 
 --[[
     ========================================
-    Main Check Loop
+    Main Turn In Function (Event-Driven)
     ========================================
 ]]
 
-function AutoTurnIn.CheckLoop()
+-- Single check and turn in (called by events, not loop)
+function AutoTurnIn.CheckAndTurnIn()
+    if not AutoTurnIn.IsRunning or not AutoTurnIn.Settings.AutoTurnInEnabled then
+        return
+    end
+    
     task.spawn(function()
-        print("[AutoTurnIn] ✅ Check loop started!")
+        -- Get current wanted brainrot
+        local wantedName = AutoTurnIn.GetWantedBrainrot()
+        AutoTurnIn.CurrentWanted = wantedName
         
-        while AutoTurnIn.IsRunning and AutoTurnIn.Settings.AutoTurnInEnabled do
-            -- Get current wanted brainrot
-            local wantedName = AutoTurnIn.GetWantedBrainrot()
-            AutoTurnIn.CurrentWanted = wantedName
-            
-            if wantedName then
-                local totalWanted = #AutoTurnIn.WantedList
-                print(string.format("[AutoTurnIn] 🎯 Wanted [%d/%d]: %s", 
-                    AutoTurnIn.CurrentIndex, totalWanted, wantedName))
-                
-                -- Find the brainrot tool
-                local brainrotTool = AutoTurnIn.FindWantedBrainrot(wantedName)
-                
-                if brainrotTool then
-                    local location = brainrotTool.Parent.Name
-                    print("[AutoTurnIn] ✅ Found wanted brainrot in:", location)
-                    
-                    -- Equip it to character if needed
-                    if brainrotTool.Parent ~= AutoTurnIn.References.LocalPlayer.Character then
-                        print("[AutoTurnIn] 📦 Equipping from backpack to character...")
-                        local equipped = AutoTurnIn.EquipBrainrot(brainrotTool)
-                        
-                        if not equipped then
-                            warn("[AutoTurnIn] ⚠️ Failed to equip brainrot!")
-                            task.wait(2)
-                            -- Skip to next iteration to retry
-                            task.wait(AutoTurnIn.Settings.CheckInterval)
-                            continue
-                        end
-                        
-                        print("[AutoTurnIn] ✅ Equipped to character!")
-                    end
-                    
-                    -- Now turn it in
-                    print("[AutoTurnIn] 📤 Turning in...")
-                    local success = AutoTurnIn.TurnIn()
-                    
-                    if success then
-                        print("[AutoTurnIn] 🎉 Turned in successfully! Total:", AutoTurnIn.TotalTurnIns)
-                        
-                        -- Increment index for next one
-                        AutoTurnIn.CurrentIndex = AutoTurnIn.CurrentIndex + 1
-                    else
-                        warn("[AutoTurnIn] ⚠️ Failed to turn in!")
-                    end
-                    
-                    -- Wait a bit longer after turning in
-                    task.wait(3)
-                else
-                    print("[AutoTurnIn] ❌ Don't own", wantedName)
-                end
+        if not wantedName then
+            if #AutoTurnIn.WantedList == 0 then
+                warn("[AutoTurnIn] ⚠️ Wanted list not loaded!")
             else
-                if #AutoTurnIn.WantedList == 0 then
-                    warn("[AutoTurnIn] ⚠️ Wanted list not loaded! Retrying...")
-                    
-                    -- Try to reload the list
-                    pcall(function()
-                        local modules = AutoTurnIn.Services.ReplicatedStorage:FindFirstChild("Modules")
-                        if modules then
-                            local library = modules:FindFirstChild("Library")
-                            if library then
-                                local eventTracks = library:FindFirstChild("EventTracks")
-                                if eventTracks then
-                                    local prisonTrack = eventTracks:FindFirstChild("Prison")
-                                    if prisonTrack then
-                                        local wantedList = require(prisonTrack)
-                                        if wantedList and type(wantedList) == "table" then
-                                            AutoTurnIn.WantedList = wantedList
-                                            print("[AutoTurnIn] ✅ Reloaded", #wantedList, "wanted brainrots")
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end)
-                else
-                    print("[AutoTurnIn] ✅ All wanted brainrots completed!")
-                end
+                print("[AutoTurnIn] ✅ All wanted brainrots completed!")
             end
-            
-            -- Wait before next check
-            task.wait(AutoTurnIn.Settings.CheckInterval)
+            return
         end
         
-        print("[AutoTurnIn] ⏹️ Check loop stopped")
+        local totalWanted = #AutoTurnIn.WantedList
+        print(string.format("[AutoTurnIn] 🎯 Checking [%d/%d]: %s", 
+            AutoTurnIn.CurrentIndex, totalWanted, wantedName))
+        
+        -- Find the brainrot tool
+        local brainrotTool = AutoTurnIn.FindWantedBrainrot(wantedName)
+        
+        if not brainrotTool then
+            print("[AutoTurnIn] ⏳ Waiting for:", wantedName)
+            return
+        end
+        
+        local location = brainrotTool.Parent.Name
+        print("[AutoTurnIn] ✅ Found in:", location)
+        
+        -- Equip it to character if needed
+        if brainrotTool.Parent ~= AutoTurnIn.References.LocalPlayer.Character then
+            print("[AutoTurnIn] 📦 Equipping to character...")
+            local equipped = AutoTurnIn.EquipBrainrot(brainrotTool)
+            
+            if not equipped then
+                warn("[AutoTurnIn] ⚠️ Failed to equip! Will retry when new item added.")
+                return
+            end
+            
+            print("[AutoTurnIn] ✅ Equipped!")
+        end
+        
+        -- Turn it in
+        print("[AutoTurnIn] 📤 Turning in...")
+        local success = AutoTurnIn.TurnIn()
+        
+        if success then
+            print("[AutoTurnIn] 🎉 Success! Total:", AutoTurnIn.TotalTurnIns)
+            -- Server will send Success event which triggers next check
+        else
+            warn("[AutoTurnIn] ⚠️ Failed to turn in!")
+        end
     end)
+end
+
+-- Setup event listeners to trigger CheckAndTurnIn
+function AutoTurnIn.SetupEventListeners()
+    local player = AutoTurnIn.References.LocalPlayer
+    local backpack = player:FindFirstChild("Backpack")
+    local character = player.Character
+    
+    -- Listen for new items in backpack
+    if backpack and not AutoTurnIn.BackpackConnection then
+        AutoTurnIn.BackpackConnection = backpack.ChildAdded:Connect(function(child)
+            if child:IsA("Tool") and AutoTurnIn.IsRunning then
+                task.wait(0.1) -- Small delay for replication
+                print("[AutoTurnIn] 📥 New item added to backpack:", child.Name)
+                AutoTurnIn.CheckAndTurnIn()
+            end
+        end)
+    end
+    
+    -- Listen for character changes (respawn, etc)
+    player.CharacterAdded:Connect(function(newChar)
+        task.wait(1) -- Wait for character to load
+        if AutoTurnIn.IsRunning then
+            print("[AutoTurnIn] 🔄 Character loaded, checking...")
+            AutoTurnIn.CheckAndTurnIn()
+        end
+    end)
+end
+
+-- Cleanup event listeners
+function AutoTurnIn.CleanupEventListeners()
+    if AutoTurnIn.BackpackConnection then
+        AutoTurnIn.BackpackConnection:Disconnect()
+        AutoTurnIn.BackpackConnection = nil
+    end
+    if AutoTurnIn.CharacterConnection then
+        AutoTurnIn.CharacterConnection:Disconnect()
+        AutoTurnIn.CharacterConnection = nil
+    end
 end
 
 --[[
@@ -387,7 +402,13 @@ function AutoTurnIn.Start()
     
     AutoTurnIn.IsRunning = true
     AutoTurnIn.TotalTurnIns = 0
-    AutoTurnIn.CheckLoop()
+    
+    -- Setup event listeners
+    AutoTurnIn.SetupEventListeners()
+    
+    -- Do initial check
+    print("[AutoTurnIn] ▶️ Auto Turn In started (event-driven)")
+    AutoTurnIn.CheckAndTurnIn()
     
     return true
 end
@@ -397,6 +418,11 @@ function AutoTurnIn.Stop()
     
     AutoTurnIn.IsRunning = false
     AutoTurnIn.CurrentWanted = nil
+    
+    -- Cleanup event listeners
+    AutoTurnIn.CleanupEventListeners()
+    
+    print("[AutoTurnIn] ⏹️ Auto Turn In stopped")
     return true
 end
 
