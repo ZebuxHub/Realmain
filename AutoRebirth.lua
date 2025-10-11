@@ -112,16 +112,38 @@ function AutoRebirth.GetOwnedBrainrots(requiredNames)
     local owned = {}
     
     pcall(function()
-        local backpack = AutoRebirth.References.LocalPlayer:FindFirstChild("Backpack")
-        if not backpack then return end
+        local player = AutoRebirth.References.LocalPlayer
+        local backpack = player:FindFirstChild("Backpack")
+        local character = player.Character
         
-        -- Only check backpack items (no ReplicatedStorage lookup needed)
-        for _, item in ipairs(backpack:GetChildren()) do
-            if item:IsA("Tool") then
-                local itemName = item.Name
-                -- Only track if this is a required brainrot
-                if requiredNames[itemName] then
-                    owned[itemName] = item
+        -- Check backpack
+        if backpack then
+            for _, item in ipairs(backpack:GetChildren()) do
+                if item:IsA("Tool") then
+                    local itemName = item.Name
+                    -- Check if this tool matches any required brainrot (handles prefixes)
+                    for requiredName, _ in pairs(requiredNames) do
+                        if not owned[requiredName] and itemName:find(requiredName, 1, true) then
+                            owned[requiredName] = item
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        
+        -- Check character
+        if character then
+            for _, item in ipairs(character:GetChildren()) do
+                if item:IsA("Tool") then
+                    local itemName = item.Name
+                    -- Check if this tool matches any required brainrot (handles prefixes)
+                    for requiredName, _ in pairs(requiredNames) do
+                        if not owned[requiredName] and itemName:find(requiredName, 1, true) then
+                            owned[requiredName] = item
+                            break
+                        end
+                    end
                 end
             end
         end
@@ -183,14 +205,29 @@ function AutoRebirth.CheckRequirements()
         end
     end
     
-    -- Single backpack scan with filtered lookup (O(n))
+    -- Single backpack+character scan with filtered lookup (O(n))
     local ownedBrainrots = AutoRebirth.GetOwnedBrainrots(requiredNames)
     
+    -- Debug: Show what we found
+    print("[AutoRebirth] 🔎 Found brainrots:")
+    for name, tool in pairs(ownedBrainrots) do
+        print("  ✅ " .. name .. " (" .. tool.Name .. ")")
+    end
+    
     -- Validate all requirements met
+    local missing = {}
     for name, _ in pairs(requiredNames) do
         if not ownedBrainrots[name] then
-            return false  -- Missing a required brainrot
+            table.insert(missing, name)
         end
+    end
+    
+    if #missing > 0 then
+        print("[AutoRebirth] ❌ Missing brainrots:")
+        for _, name in ipairs(missing) do
+            print("  - " .. name)
+        end
+        return false  -- Missing required brainrots
     end
     
     -- Favorite brainrots to protect them (batch operation)
@@ -243,24 +280,56 @@ end
 -- Main loop - Highly optimized
 function AutoRebirth.CheckLoop()
     task.spawn(function()
+        print("[AutoRebirth] ✅ Check loop started")
+        
         while AutoRebirth.IsRunning and AutoRebirth.Settings.AutoRebirthEnabled do
             -- Only check on interval
             if tick() - AutoRebirth.LastCheckTime >= AutoRebirth.Settings.CheckInterval then
                 AutoRebirth.LastCheckTime = tick()
                 AutoRebirth.CurrentRebirth = AutoRebirth.GetCurrentRebirth()
                 
+                print(string.format("[AutoRebirth] 🔍 Checking requirements for Rebirth %d...", AutoRebirth.CurrentRebirth + 1))
+                
+                -- Get rebirth info for debugging
+                if AutoRebirth.RebirthData then
+                    local rebirthInfo = AutoRebirth.RebirthData[AutoRebirth.CurrentRebirth + 1]
+                    if rebirthInfo and rebirthInfo.Requirements then
+                        local playerMoney = AutoRebirth.GetPlayerMoney()
+                        local requiredMoney = rebirthInfo.Requirements.Money or 0
+                        print(string.format("[AutoRebirth] 💰 Money: %s / %s", 
+                            AutoRebirth.FormatNumber(playerMoney), 
+                            AutoRebirth.FormatNumber(requiredMoney)))
+                        
+                        -- Show required brainrots
+                        print("[AutoRebirth] 📋 Required brainrots:")
+                        for name, _ in pairs(rebirthInfo.Requirements) do
+                            if name ~= "Money" then
+                                print("  - " .. name)
+                            end
+                        end
+                    end
+                end
+                
                 -- Fast check (early exit on money or brainrots missing)
                 local ready, brainrots = AutoRebirth.CheckRequirements()
                 
                 if ready and brainrots then
+                    print("[AutoRebirth] ✅ All requirements met! Starting rebirth...")
                     if AutoRebirth.DoRebirth(brainrots) then
+                        print("[AutoRebirth] 🎉 Rebirth successful!")
                         task.wait(10)  -- Cooldown after rebirth
+                    else
+                        warn("[AutoRebirth] ❌ Rebirth failed!")
                     end
+                else
+                    print("[AutoRebirth] ⏳ Requirements not met yet")
                 end
             end
             
             task.wait(1)  -- 1 second granularity
         end
+        
+        print("[AutoRebirth] ⏹️ Check loop stopped")
     end)
 end
 
