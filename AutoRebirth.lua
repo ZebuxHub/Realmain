@@ -107,28 +107,21 @@ function AutoRebirth.GetPlayerMoney()
     return success and money or 0
 end
 
--- Get owned brainrots in backpack with their IDs
-function AutoRebirth.GetOwnedBrainrots()
+-- Get owned brainrots - Optimized (O(n) single pass)
+function AutoRebirth.GetOwnedBrainrots(requiredNames)
     local owned = {}
     
     pcall(function()
         local backpack = AutoRebirth.References.LocalPlayer:FindFirstChild("Backpack")
         if not backpack then return end
         
-        local plants = AutoRebirth.Services.ReplicatedStorage:FindFirstChild("Assets")
-        if plants then
-            plants = plants:FindFirstChild("Plants")
-        end
-        if not plants then return end
-        
-        -- Check each plant in backpack
+        -- Only check backpack items (no ReplicatedStorage lookup needed)
         for _, item in ipairs(backpack:GetChildren()) do
             if item:IsA("Tool") then
-                -- Check if it's a brainrot (exists in Plants folder)
-                local plantModel = plants:FindFirstChild(item.Name)
-                if plantModel then
-                    -- Store both name and the tool instance (for ID)
-                    owned[item.Name] = item
+                local itemName = item.Name
+                -- Only track if this is a required brainrot
+                if requiredNames[itemName] then
+                    owned[itemName] = item
                 end
             end
         end
@@ -137,99 +130,74 @@ function AutoRebirth.GetOwnedBrainrots()
     return owned
 end
 
--- Favorite a brainrot to prevent auto-placement
-function AutoRebirth.FavoriteBrainrot(brainrotTool)
-    if not AutoRebirth.FavoriteRemote or not brainrotTool then return false end
+-- Batch favorite brainrots - Optimized
+function AutoRebirth.FavoriteBrainrots(brainrotTools)
+    if not AutoRebirth.FavoriteRemote then return end
     
-    -- Get the unique ID from the tool (usually the Name or a specific attribute)
-    local brainrotId = brainrotTool.Name
-    
-    -- Check if already favorited
-    if AutoRebirth.FavoritedBrainrots[brainrotId] then
-        return true
+    for _, tool in pairs(brainrotTools) do
+        local id = tool.Name
+        if not AutoRebirth.FavoritedBrainrots[id] then
+            pcall(function()
+                AutoRebirth.FavoriteRemote:FireServer(id)
+            end)
+            AutoRebirth.FavoritedBrainrots[id] = true
+        end
     end
-    
-    local success = pcall(function()
-        AutoRebirth.FavoriteRemote:FireServer(brainrotId)
-    end)
-    
-    if success then
-        AutoRebirth.FavoritedBrainrots[brainrotId] = true
-    end
-    
-    return success
 end
 
--- Remove favorited brainrot (before rebirth)
-function AutoRebirth.RemoveBrainrot(brainrotTool)
-    if not AutoRebirth.RemoveItemRemote or not brainrotTool then return false end
+-- Batch remove brainrots - Optimized
+function AutoRebirth.RemoveBrainrots(brainrotTools)
+    if not AutoRebirth.RemoveItemRemote then return end
     
-    local brainrotId = brainrotTool.Name
-    
-    local success = pcall(function()
-        AutoRebirth.RemoveItemRemote:FireServer(brainrotId)
-    end)
-    
-    if success then
-        AutoRebirth.FavoritedBrainrots[brainrotId] = nil
+    for _, tool in pairs(brainrotTools) do
+        pcall(function()
+            AutoRebirth.RemoveItemRemote:FireServer(tool.Name)
+        end)
     end
     
-    return success
+    -- Small delay for server processing
+    task.wait(0.3)
 end
 
--- Check if requirements are met for next rebirth
+-- Check requirements - Highly optimized
 function AutoRebirth.CheckRequirements()
-    if not AutoRebirth.RebirthData then
-        return false, "Rebirth data not loaded"
-    end
+    if not AutoRebirth.RebirthData then return false end
     
     local currentRebirth = AutoRebirth.GetCurrentRebirth()
-    local nextRebirth = currentRebirth + 1
+    local rebirthInfo = AutoRebirth.RebirthData[currentRebirth + 1]
     
-    -- Get requirements for next rebirth
-    local rebirthInfo = AutoRebirth.RebirthData[nextRebirth]
-    if not rebirthInfo then
-        return false, "Max rebirth reached"
-    end
+    if not rebirthInfo or not rebirthInfo.Requirements then return false end
     
     local requirements = rebirthInfo.Requirements
-    if not requirements then
-        return false, "No requirements found"
+    
+    -- Fast path: Check money first (cheapest check)
+    if AutoRebirth.GetPlayerMoney() < (requirements.Money or 0) then
+        return false
     end
     
-    -- Check money requirement
-    local playerMoney = AutoRebirth.GetPlayerMoney()
-    local requiredMoney = requirements.Money or 0
-    
-    if playerMoney < requiredMoney then
-        return false, string.format("Need $%s (have $%s)", 
-            AutoRebirth.FormatNumber(requiredMoney), 
-            AutoRebirth.FormatNumber(playerMoney))
-    end
-    
-    -- Check brainrot requirements and favorite needed ones
-    local ownedBrainrots = AutoRebirth.GetOwnedBrainrots()
-    local neededBrainrots = {}
-    
-    for brainrotName, requiredCount in pairs(requirements) do
-        -- Skip Money requirement
-        if brainrotName ~= "Money" then
-            local brainrotTool = ownedBrainrots[brainrotName]
-            
-            if not brainrotTool then
-                return false, string.format("Missing brainrot: %s", brainrotName), nil
-            end
-            
-            -- Favorite this brainrot to prevent auto-place from using it
-            AutoRebirth.FavoriteBrainrot(brainrotTool)
-            
-            -- Track needed brainrots for removal later
-            neededBrainrots[brainrotName] = brainrotTool
+    -- Build required brainrot names lookup (O(n))
+    local requiredNames = {}
+    for name, _ in pairs(requirements) do
+        if name ~= "Money" then
+            requiredNames[name] = true
         end
     end
     
+    -- Single backpack scan with filtered lookup (O(n))
+    local ownedBrainrots = AutoRebirth.GetOwnedBrainrots(requiredNames)
+    
+    -- Validate all requirements met
+    for name, _ in pairs(requiredNames) do
+        if not ownedBrainrots[name] then
+            return false  -- Missing a required brainrot
+        end
+    end
+    
+    -- Favorite brainrots to protect them (batch operation)
+    AutoRebirth.FavoriteBrainrots(ownedBrainrots)
+    
     -- All requirements met!
-    return true, "Requirements met", neededBrainrots
+    return true, ownedBrainrots
 end
 
 -- Format numbers with suffixes
@@ -245,22 +213,12 @@ function AutoRebirth.FormatNumber(num)
     end
 end
 
--- Fire rebirth remote
-function AutoRebirth.DoRebirth(neededBrainrots)
-    if not AutoRebirth.RebirthRemote then
-        warn("[AutoRebirth] ⚠️ Rebirth remote not found!")
-        return false
-    end
+-- Fire rebirth - Optimized
+function AutoRebirth.DoRebirth(brainrots)
+    if not AutoRebirth.RebirthRemote or not brainrots then return false end
     
-    -- Remove all needed brainrots before rebirth
-    if neededBrainrots then
-        for brainrotName, brainrotTool in pairs(neededBrainrots) do
-            AutoRebirth.RemoveBrainrot(brainrotTool)
-        end
-        
-        -- Small delay to ensure removals process
-        task.wait(0.5)
-    end
+    -- Batch remove brainrots
+    AutoRebirth.RemoveBrainrots(brainrots)
     
     -- Fire rebirth
     local success = pcall(function()
@@ -268,11 +226,8 @@ function AutoRebirth.DoRebirth(neededBrainrots)
     end)
     
     if success then
-        -- Clear favorited list (fresh start after rebirth)
-        AutoRebirth.FavoritedBrainrots = {}
-        
-        -- Wait for rebirth to complete
-        task.wait(2)
+        AutoRebirth.FavoritedBrainrots = {}  -- Clear cache
+        task.wait(2)  -- Wait for server processing
         AutoRebirth.CurrentRebirth = AutoRebirth.GetCurrentRebirth()
     end
     
@@ -285,34 +240,26 @@ end
     ========================================
 ]]
 
+-- Main loop - Highly optimized
 function AutoRebirth.CheckLoop()
     task.spawn(function()
         while AutoRebirth.IsRunning and AutoRebirth.Settings.AutoRebirthEnabled do
-            local currentTime = tick()
-            
-            -- Only check on interval (performance optimization)
-            if currentTime - AutoRebirth.LastCheckTime >= AutoRebirth.Settings.CheckInterval then
-                AutoRebirth.LastCheckTime = currentTime
-                
-                -- Update current rebirth
+            -- Only check on interval
+            if tick() - AutoRebirth.LastCheckTime >= AutoRebirth.Settings.CheckInterval then
+                AutoRebirth.LastCheckTime = tick()
                 AutoRebirth.CurrentRebirth = AutoRebirth.GetCurrentRebirth()
                 
-                -- Check if ready to rebirth (also favorites needed brainrots)
-                local canRebirth, reason, neededBrainrots = AutoRebirth.CheckRequirements()
+                -- Fast check (early exit on money or brainrots missing)
+                local ready, brainrots = AutoRebirth.CheckRequirements()
                 
-                if canRebirth then
-                    -- Fire rebirth (removes favorited brainrots first)
-                    local success = AutoRebirth.DoRebirth(neededBrainrots)
-                    
-                    if success then
-                        -- Wait a bit after rebirth before checking again
-                        task.wait(10)
+                if ready and brainrots then
+                    if AutoRebirth.DoRebirth(brainrots) then
+                        task.wait(10)  -- Cooldown after rebirth
                     end
                 end
             end
             
-            -- Wait before next check (1 second granularity)
-            task.wait(1)
+            task.wait(1)  -- 1 second granularity
         end
     end)
 end
@@ -328,56 +275,14 @@ function AutoRebirth.Start()
     
     AutoRebirth.IsRunning = true
     AutoRebirth.LastCheckTime = 0
-    AutoRebirth.CurrentRebirth = AutoRebirth.GetCurrentRebirth()
-    
-    -- Reload data in case it changed
-    AutoRebirth.LoadRebirthData()
-    
-    -- Start check loop
     AutoRebirth.CheckLoop()
     
     return true
 end
 
 function AutoRebirth.Stop()
-    if not AutoRebirth.IsRunning then return false end
-    
     AutoRebirth.IsRunning = false
-    
     return true
-end
-
---[[
-    ========================================
-    Status Functions
-    ========================================
-]]
-
-function AutoRebirth.GetStatus()
-    local canRebirth, reason = AutoRebirth.CheckRequirements()
-    
-    return {
-        IsRunning = AutoRebirth.IsRunning,
-        CurrentRebirth = AutoRebirth.CurrentRebirth,
-        CanRebirth = canRebirth,
-        Reason = reason,
-        NextCheck = AutoRebirth.Settings.CheckInterval - (tick() - AutoRebirth.LastCheckTime)
-    }
-end
-
--- Get next rebirth requirements for display
-function AutoRebirth.GetNextRequirements()
-    if not AutoRebirth.RebirthData then return nil end
-    
-    local currentRebirth = AutoRebirth.GetCurrentRebirth()
-    local nextRebirth = currentRebirth + 1
-    local rebirthInfo = AutoRebirth.RebirthData[nextRebirth]
-    
-    if not rebirthInfo or not rebirthInfo.Requirements then
-        return nil
-    end
-    
-    return rebirthInfo.Requirements
 end
 
 return AutoRebirth
