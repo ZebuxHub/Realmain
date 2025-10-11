@@ -37,10 +37,11 @@ local AutoAttack = {
     References = nil,
     Brain = nil,
     
-    -- Connections
+    -- Connections & Cached Remotes
     AttackLoop = nil,
     EquippedConnection = nil,
-    HealthMonitorConnection = nil
+    HealthMonitorConnection = nil,
+    AttackRemote = nil  -- Cached for performance
 }
 
 --[[
@@ -230,20 +231,39 @@ function AutoAttack.MoveToTarget(target)
     return (hrp.Position - targetPos).Magnitude
 end
 
--- Attack target - Optimized
+-- Attack target - Optimized with remote caching
 function AutoAttack.AttackTarget(target)
     if not target or not target.ID then return false end
     
-    local success = pcall(function()
-        AutoAttack.Services.ReplicatedStorage
-            :WaitForChild("Remotes")
-            :WaitForChild("AttacksServer")
-            :WaitForChild("WeaponAttack")
-            :FireServer({{target.ID}})
+    local success, err = pcall(function()
+        -- Cache remote for performance
+        if not AutoAttack.AttackRemote then
+            AutoAttack.AttackRemote = AutoAttack.Services.ReplicatedStorage
+                :WaitForChild("Remotes", 5)
+                :WaitForChild("AttacksServer", 5)
+                :WaitForChild("WeaponAttack", 5)
+        end
+        
+        if AutoAttack.AttackRemote then
+            -- Fire with correct format: {{target_id}}
+            local args = {
+                [1] = {
+                    [1] = target.ID
+                }
+            }
+            AutoAttack.AttackRemote:FireServer(unpack(args))
+            AutoAttack.TotalAttacks = AutoAttack.TotalAttacks + 1
+            return true
+        else
+            warn("[AutoAttack] ⚠️ WeaponAttack remote not found!")
+            return false
+        end
     end)
     
-    if success then
-        AutoAttack.TotalAttacks = AutoAttack.TotalAttacks + 1
+    if not success then
+        warn("[AutoAttack] ❌ Attack error:", err)
+        -- Reset cached remote in case path changed
+        AutoAttack.AttackRemote = nil
     end
     
     return success
