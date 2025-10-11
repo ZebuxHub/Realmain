@@ -86,6 +86,12 @@ function AutoTurnIn.Init(services, references, brain)
         end)
     end
     
+    -- Sync current index based on imprisoned brainrots
+    task.spawn(function()
+        task.wait(1) -- Wait for workspace to load
+        AutoTurnIn.SyncProgressFromPrison()
+    end)
+    
     return true
 end
 
@@ -94,6 +100,66 @@ end
     Helper Functions
     ========================================
 ]]
+
+-- Sync progress by checking imprisoned brainrots
+function AutoTurnIn.SyncProgressFromPrison()
+    local success, result = pcall(function()
+        -- Find the prison in workspace
+        local prison = workspace:FindFirstChild("ScriptedMap")
+        if not prison then return end
+        
+        prison = prison:FindFirstChild("Prison")
+        if not prison then return end
+        
+        local imprisonedFolder = prison:FindFirstChild("ImprisonedBrainrot")
+        if not imprisonedFolder then return end
+        
+        -- Check if wanted list is loaded
+        if not AutoTurnIn.WantedList or #AutoTurnIn.WantedList == 0 then
+            warn("[AutoTurnIn] ⚠️ Cannot sync - wanted list not loaded")
+            return
+        end
+        
+        -- Get all imprisoned brainrot names
+        local imprisoned = {}
+        for _, child in ipairs(imprisonedFolder:GetChildren()) do
+            if child:IsA("Model") then
+                imprisoned[child.Name] = true
+            end
+        end
+        
+        -- Count how many from the list have been turned in
+        local turnedInCount = 0
+        for i, wantedName in ipairs(AutoTurnIn.WantedList) do
+            if imprisoned[wantedName] then
+                turnedInCount = i
+            else
+                -- First one not found means we're on this one
+                break
+            end
+        end
+        
+        -- Update current index (next one to turn in)
+        AutoTurnIn.CurrentIndex = turnedInCount + 1
+        
+        print(string.format("[AutoTurnIn] 🔄 Synced progress: %d/%d completed", 
+            turnedInCount, #AutoTurnIn.WantedList))
+        
+        if turnedInCount > 0 then
+            print("[AutoTurnIn] 📋 Last turned in:", AutoTurnIn.WantedList[turnedInCount])
+        end
+        
+        if AutoTurnIn.CurrentIndex <= #AutoTurnIn.WantedList then
+            print("[AutoTurnIn] 🎯 Next wanted:", AutoTurnIn.WantedList[AutoTurnIn.CurrentIndex])
+        else
+            print("[AutoTurnIn] ✅ All wanted brainrots completed!")
+        end
+    end)
+    
+    if not success then
+        warn("[AutoTurnIn] ⚠️ Failed to sync progress:", result)
+    end
+end
 
 -- Get current wanted brainrot name from the list
 function AutoTurnIn.GetWantedBrainrot()
@@ -261,6 +327,9 @@ function AutoTurnIn.Start()
             return false
         end
     end
+    
+    -- Sync progress before starting
+    AutoTurnIn.SyncProgressFromPrison()
     
     AutoTurnIn.IsRunning = true
     AutoTurnIn.TotalTurnIns = 0
