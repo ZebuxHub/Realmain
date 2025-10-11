@@ -127,33 +127,37 @@ function AutoTurnIn.SyncProgressFromPrison()
             return
         end
         
-        -- Get all imprisoned brainrot names
-        local imprisoned = {}
+        -- Get all imprisoned brainrot models
+        local imprisonedModels = {}
         for _, child in ipairs(imprisonedFolder:GetChildren()) do
             if child:IsA("Model") then
-                imprisoned[child.Name] = true
+                table.insert(imprisonedModels, child.Name)
             end
         end
         
-        -- Count how many from the list have been turned in
-        local turnedInCount = 0
-        for i, wantedName in ipairs(AutoTurnIn.WantedList) do
-            if imprisoned[wantedName] then
-                turnedInCount = i
-            else
-                -- First one not found means we're on this one
-                break
+        -- Find the highest index in wanted list that matches imprisoned brainrots
+        local highestIndex = 0
+        for _, imprisonedName in ipairs(imprisonedModels) do
+            -- Find this brainrot in the wanted list
+            for i, wantedName in ipairs(AutoTurnIn.WantedList) do
+                if imprisonedName == wantedName then
+                    -- Track the highest index found
+                    if i > highestIndex then
+                        highestIndex = i
+                    end
+                    break
+                end
             end
         end
         
         -- Update current index (next one to turn in)
-        AutoTurnIn.CurrentIndex = turnedInCount + 1
+        AutoTurnIn.CurrentIndex = highestIndex + 1
         
-        print(string.format("[AutoTurnIn] 🔄 Synced progress: %d/%d completed", 
-            turnedInCount, #AutoTurnIn.WantedList))
+        print(string.format("[AutoTurnIn] 🔄 Synced progress: %d/%d completed (found %d imprisoned)", 
+            highestIndex, #AutoTurnIn.WantedList, #imprisonedModels))
         
-        if turnedInCount > 0 then
-            print("[AutoTurnIn] 📋 Last turned in:", AutoTurnIn.WantedList[turnedInCount])
+        if highestIndex > 0 then
+            print("[AutoTurnIn] 📋 Last turned in:", AutoTurnIn.WantedList[highestIndex])
         end
         
         if AutoTurnIn.CurrentIndex <= #AutoTurnIn.WantedList then
