@@ -196,16 +196,15 @@ function AutoTrade.FindMatchingItem()
             local itemName = child.Name
             
             if itemMode == "Plant" then
-                local plantFilterType = AutoTrade.Settings.PlantFilterType
-                
-                if plantFilterType == "Mutation" then
-                    -- Filter by plant mutation (e.g., "Gold Pumpkin", "Diamond Sunflower")
-                    local mutation = AutoTrade.Settings.SelectedPlantMutation
-                    if mutation ~= "" and itemName:find(mutation) then
+                -- Check mutation first (independent of plant name)
+                local mutation = AutoTrade.Settings.SelectedPlantMutation
+                if mutation ~= "" then
+                    -- Mutation is selected: Gift ANY plant with this mutation
+                    if itemName:find(mutation) then
                         return child
                     end
                 else
-                    -- Filter by plant name (exact match: e.g., "Pumpkin")
+                    -- No mutation selected: Gift by plant name
                     local plantName = AutoTrade.Settings.SelectedPlant
                     if plantName ~= "" and itemName == plantName then
                         return child
@@ -315,20 +314,13 @@ function AutoTrade.Start()
     
     -- Validate item selection based on mode
     if AutoTrade.Settings.ItemMode == "Plant" then
-        local plantFilterType = AutoTrade.Settings.PlantFilterType
+        -- For plants: Check mutation first, then plant name
+        local mutation = AutoTrade.Settings.SelectedPlantMutation
+        local plantName = AutoTrade.Settings.SelectedPlant
         
-        if plantFilterType == "Mutation" then
-            -- Validate plant mutation selected
-            if AutoTrade.Settings.SelectedPlantMutation == "" then
-                warn("[AutoTrade] ⚠️ No plant mutation selected!")
-                return false
-            end
-        else
-            -- Validate plant name selected
-            if AutoTrade.Settings.SelectedPlant == "" then
-                warn("[AutoTrade] ⚠️ No plant selected!")
-                return false
-            end
+        if mutation == "" and plantName == "" then
+            warn("[AutoTrade] ⚠️ Please select either a plant mutation or plant name!")
+            return false
         end
     else  -- Brainrot mode
         local filterType = AutoTrade.Settings.FilterType
