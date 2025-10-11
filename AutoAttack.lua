@@ -239,59 +239,66 @@ function AutoAttack.SelectTarget()
     return targets[1]
 end
 
--- Move to target (TP once and lock in position)
+-- Move to target based on movement mode (returns current distance)
 function AutoAttack.MoveToTarget(target)
     if not target or not target.Model then 
         print("[AutoAttack] ❌ MoveToTarget: Invalid target")
-        return false
+        return math.huge 
     end
     
     local character = AutoAttack.References.LocalPlayer.Character
     if not character then 
         print("[AutoAttack] ❌ MoveToTarget: No character")
-        return false
+        return math.huge 
     end
     
     local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
     if not humanoidRootPart then 
         print("[AutoAttack] ❌ MoveToTarget: No HumanoidRootPart")
-        return false
+        return math.huge 
     end
     
-    -- Get target position
+    -- Get LIVE position from model
     local targetPosition = target.Model:GetPivot().Position
     local distance = (humanoidRootPart.Position - targetPosition).Magnitude
     
     print(string.format("[AutoAttack] 📏 Distance to %s: %.2f studs", target.ID, distance))
     
+    -- Already very close (within 1 stud for attacking)
+    if distance <= 5 then
+        print("[AutoAttack] ✅ In attack range!")
+        return distance
+    end
+    
     local movementMode = AutoAttack.Settings.MovementMode
     print("[AutoAttack] 🚶 Moving (" .. movementMode .. ") to target...")
     
     if movementMode == "TP" then
-        -- Teleport directly to target position
+        -- Teleport close to target (1 stud away)
         pcall(function()
-            humanoidRootPart.CFrame = CFrame.new(targetPosition)
-            print("[AutoAttack] ⚡ Teleported to target - LOCKED IN!")
+            local offset = (humanoidRootPart.Position - targetPosition).Unit * 1
+            humanoidRootPart.CFrame = CFrame.new(targetPosition + offset)
+            print("[AutoAttack] ⚡ Teleported to target")
         end)
         
     elseif movementMode == "Tween" then
         -- Quick tween to target
         local TweenService = game:GetService("TweenService")
         local tweenInfo = TweenInfo.new(
-            0.2,  -- Fast tween
+            0.3,  -- Fast tween (0.3 seconds)
             Enum.EasingStyle.Linear,
             Enum.EasingDirection.InOut
         )
         
+        local offset = (humanoidRootPart.Position - targetPosition).Unit * 1
         local tween = TweenService:Create(
             humanoidRootPart,
             tweenInfo,
-            {CFrame = CFrame.new(targetPosition)}
+            {CFrame = CFrame.new(targetPosition + offset)}
         )
         
         tween:Play()
-        tween.Completed:Wait()
-        print("[AutoAttack] 🎬 Tweened to target - LOCKED IN!")
+        print("[AutoAttack] 🎬 Tweening to target")
         
     elseif movementMode == "Walk" then
         -- Use Humanoid to walk
@@ -302,7 +309,10 @@ function AutoAttack.MoveToTarget(target)
         end
     end
     
-    return true
+    -- Return current distance
+    local newDistance = (humanoidRootPart.Position - targetPosition).Magnitude
+    print(string.format("[AutoAttack] 📏 New distance: %.2f studs", newDistance))
+    return newDistance
 end
 
 -- Attack target
@@ -431,53 +441,40 @@ function AutoAttack.AttackLoop()
             local target = AutoAttack.CurrentTarget
             
             if target then
-                -- Check if we need to move to this target (not yet positioned)
-                if not target.IsPositioned then
-                    print("[AutoAttack] 🎯 New target - moving to position...")
-                    
-                    -- Validate before moving
-                    if not AutoAttack.IsTargetValid(target) then
-                        print("[AutoAttack] ❌ Target invalid before movement")
-                        AutoAttack.CurrentTarget = nil
-                        continue
-                    end
-                    
-                    -- Move to target ONCE
-                    local moved = AutoAttack.MoveToTarget(target)
-                    
-                    if moved then
-                        -- Mark as positioned (won't move again until new target)
-                        target.IsPositioned = true
-                        print("[AutoAttack] 🔒 Position locked - will spam attacks now!")
-                    else
-                        print("[AutoAttack] ❌ Failed to move to target")
-                        AutoAttack.CurrentTarget = nil
-                        continue
-                    end
+                -- Double-check target is still valid BEFORE moving
+                if not AutoAttack.IsTargetValid(target) then
+                    print("[AutoAttack] ❌ Target invalid before movement")
+                    AutoAttack.CurrentTarget = nil
+                    continue  -- Skip to next iteration to find new target
                 end
                 
-                -- We're positioned - SPAM ATTACKS!
-                if target.IsPositioned then
-                    -- Validate target before attack
-                    if not AutoAttack.IsTargetValid(target) then
-                        print("[AutoAttack] ☠️ Target died!")
-                        AutoAttack.CurrentTarget = nil
-                        continue
-                    end
-                    
-                    -- Fire attack
-                    print("[AutoAttack] 💥 Spamming attack...")
+                -- CONTINUOUSLY move to target (stick to it)
+                local distance = AutoAttack.MoveToTarget(target)
+                
+                -- Check if target died/disappeared during movement
+                if not AutoAttack.IsTargetValid(target) then
+                    print("[AutoAttack] ❌ Target died during movement")
+                    AutoAttack.CurrentTarget = nil
+                    continue  -- Immediately find new target (no wait)
+                end
+                
+                -- Attack if within 1 stud
+                if distance <= 1 then
                     AutoAttack.AttackTarget(target)
                     
-                    -- Check IMMEDIATELY if target died
+                    -- Check IMMEDIATELY after attack if target is still alive
                     if not AutoAttack.IsTargetValid(target) then
                         print("[AutoAttack] ☠️ Target died from attack!")
                         AutoAttack.CurrentTarget = nil
-                        continue
+                        continue  -- Target died, find new one NOW
                     end
                     
-                    -- Wait between attacks
+                    -- Wait between attacks (fast spam if interval is low)
                     task.wait(AutoAttack.Settings.AttackInterval)
+                else
+                    print("[AutoAttack] ⏳ Not in range yet, waiting 0.1s...")
+                    -- Not in range yet, keep moving (check more frequently)
+                    task.wait(0.1)
                 end
             else
                 -- No targets available, wait and search again
