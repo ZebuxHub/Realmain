@@ -93,25 +93,52 @@ end
     ========================================
 ]]
 
--- Get current wanted brainrot name
+-- Get current wanted brainrot name from UI
 function AutoTurnIn.GetWantedBrainrot()
-    if not AutoTurnIn.PlayerDataModule or not AutoTurnIn.EventTrackModule then
-        return nil
-    end
-    
     local success, result = pcall(function()
-        local playerData = AutoTurnIn.PlayerDataModule:GetData()
-        if not playerData then return nil end
+        -- Try to read from the wanted poster UI
+        local playerGui = AutoTurnIn.References.LocalPlayer:FindFirstChild("PlayerGui")
+        if not playerGui then return nil end
         
-        local claimedRewards = playerData.Data.ClaimedRewards.Prison or 0
-        local nextWanted = AutoTurnIn.EventTrackModule[claimedRewards + 1]
+        local main = playerGui:FindFirstChild("Main")
+        if not main then return nil end
         
-        return nextWanted
+        -- Find the wanted poster GUI
+        local wantedPoster = nil
+        for _, child in ipairs(main:GetDescendants()) do
+            if child.Name == "WantedPosterGui" then
+                wantedPoster = child
+                break
+            end
+        end
+        
+        if not wantedPoster then return nil end
+        
+        -- Try to find the wanted item title
+        local wantedItemTitle = wantedPoster:FindFirstChild("Frame", true)
+        if wantedItemTitle then
+            wantedItemTitle = wantedItemTitle:FindFirstChild("Main", true)
+            if wantedItemTitle then
+                wantedItemTitle = wantedItemTitle:FindFirstChild("WantedItem", true)
+                if wantedItemTitle then
+                    wantedItemTitle = wantedItemTitle:FindFirstChild("WantedItem_Title", true)
+                    if wantedItemTitle and wantedItemTitle:IsA("TextLabel") then
+                        local text = wantedItemTitle.Text
+                        if text and text ~= "" then
+                            return text
+                        end
+                    end
+                end
+            end
+        end
+        
+        return nil
     end)
     
     if success then
         return result
     else
+        warn("[AutoTurnIn] Failed to read wanted brainrot from UI:", result)
         return nil
     end
 end
@@ -168,25 +195,43 @@ end
 
 function AutoTurnIn.CheckLoop()
     task.spawn(function()
+        print("[AutoTurnIn] ✅ Check loop started!")
+        
         while AutoTurnIn.IsRunning and AutoTurnIn.Settings.AutoTurnInEnabled do
             -- Get current wanted brainrot
             local wantedName = AutoTurnIn.GetWantedBrainrot()
             AutoTurnIn.CurrentWanted = wantedName
             
             if wantedName then
+                print("[AutoTurnIn] 🎯 Wanted:", wantedName)
+                
                 -- Check if we own it
                 if AutoTurnIn.HasWantedBrainrot(wantedName) then
+                    print("[AutoTurnIn] ✅ Found wanted brainrot! Turning in...")
+                    
                     -- Turn it in
-                    AutoTurnIn.TurnIn()
+                    local success = AutoTurnIn.TurnIn()
+                    
+                    if success then
+                        print("[AutoTurnIn] 🎉 Turned in successfully! Total:", AutoTurnIn.TotalTurnIns)
+                    else
+                        warn("[AutoTurnIn] ⚠️ Failed to turn in!")
+                    end
                     
                     -- Wait a bit longer after turning in
                     task.wait(3)
+                else
+                    print("[AutoTurnIn] ❌ Don't own", wantedName)
                 end
+            else
+                print("[AutoTurnIn] ⚠️ Could not detect wanted brainrot (Prison event might not be active)")
             end
             
             -- Wait before next check
             task.wait(AutoTurnIn.Settings.CheckInterval)
         end
+        
+        print("[AutoTurnIn] ⏹️ Check loop stopped")
     end)
 end
 
@@ -201,8 +246,20 @@ function AutoTurnIn.Start()
     
     -- Validate remote
     if not AutoTurnIn.TurnInRemote then
-        warn("[AutoTurnIn] ⚠️ Failed to find turn in remote!")
-        return false
+        -- Try to cache it again
+        pcall(function()
+            AutoTurnIn.TurnInRemote = AutoTurnIn.Services.ReplicatedStorage
+                :WaitForChild("Remotes", 5)
+                :WaitForChild("Events", 5)
+                :WaitForChild("Prison", 5)
+                :WaitForChild("Interact", 5)
+        end)
+        
+        if not AutoTurnIn.TurnInRemote then
+            warn("[AutoTurnIn] ⚠️ Failed to find turn in remote!")
+            warn("[AutoTurnIn] ⚠️ Make sure you're in the Prison area!")
+            return false
+        end
     end
     
     AutoTurnIn.IsRunning = true
