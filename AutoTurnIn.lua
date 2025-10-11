@@ -179,20 +179,20 @@ function AutoTurnIn.GetWantedBrainrot()
     return AutoTurnIn.WantedList[AutoTurnIn.CurrentIndex]
 end
 
--- Check if player owns the wanted brainrot
-function AutoTurnIn.HasWantedBrainrot(wantedName)
-    if not wantedName then return false end
+-- Find the wanted brainrot tool (returns the tool instance)
+function AutoTurnIn.FindWantedBrainrot(wantedName)
+    if not wantedName then return nil end
     
     local character = AutoTurnIn.References.LocalPlayer.Character
     local backpack = AutoTurnIn.References.LocalPlayer:FindFirstChild("Backpack")
     
-    if not character and not backpack then return false end
+    if not character and not backpack then return nil end
     
-    -- Check character
+    -- Check character first
     if character then
         for _, child in ipairs(character:GetChildren()) do
             if child:IsA("Tool") and child.Name == wantedName then
-                return true
+                return child
             end
         end
     end
@@ -201,12 +201,39 @@ function AutoTurnIn.HasWantedBrainrot(wantedName)
     if backpack then
         for _, child in ipairs(backpack:GetChildren()) do
             if child:IsA("Tool") and child.Name == wantedName then
-                return true
+                return child
             end
         end
     end
     
-    return false
+    return nil
+end
+
+-- Equip the brainrot to character (move from backpack to character)
+function AutoTurnIn.EquipBrainrot(brainrotTool)
+    if not brainrotTool then return false end
+    
+    local character = AutoTurnIn.References.LocalPlayer.Character
+    if not character then return false end
+    
+    -- If already in character, we're good
+    if brainrotTool.Parent == character then
+        return true
+    end
+    
+    -- Try to equip it
+    local success = pcall(function()
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid:EquipTool(brainrotTool)
+        end
+    end)
+    
+    -- Wait a moment for it to equip
+    task.wait(0.2)
+    
+    -- Verify it's equipped
+    return brainrotTool.Parent == character
 end
 
 -- Turn in the wanted brainrot
@@ -243,11 +270,31 @@ function AutoTurnIn.CheckLoop()
                 print(string.format("[AutoTurnIn] 🎯 Wanted [%d/%d]: %s", 
                     AutoTurnIn.CurrentIndex, totalWanted, wantedName))
                 
-                -- Check if we own it
-                if AutoTurnIn.HasWantedBrainrot(wantedName) then
-                    print("[AutoTurnIn] ✅ Found wanted brainrot! Turning in...")
+                -- Find the brainrot tool
+                local brainrotTool = AutoTurnIn.FindWantedBrainrot(wantedName)
+                
+                if brainrotTool then
+                    local location = brainrotTool.Parent.Name
+                    print("[AutoTurnIn] ✅ Found wanted brainrot in:", location)
                     
-                    -- Turn it in
+                    -- Equip it to character if needed
+                    if brainrotTool.Parent ~= AutoTurnIn.References.LocalPlayer.Character then
+                        print("[AutoTurnIn] 📦 Equipping from backpack to character...")
+                        local equipped = AutoTurnIn.EquipBrainrot(brainrotTool)
+                        
+                        if not equipped then
+                            warn("[AutoTurnIn] ⚠️ Failed to equip brainrot!")
+                            task.wait(2)
+                            -- Skip to next iteration to retry
+                            task.wait(AutoTurnIn.Settings.CheckInterval)
+                            continue
+                        end
+                        
+                        print("[AutoTurnIn] ✅ Equipped to character!")
+                    end
+                    
+                    -- Now turn it in
+                    print("[AutoTurnIn] 📤 Turning in...")
                     local success = AutoTurnIn.TurnIn()
                     
                     if success then
