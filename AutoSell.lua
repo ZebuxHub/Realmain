@@ -321,15 +321,19 @@ end
 function AutoSell.SellAllItems()
     if not AutoSell.SellRemote then return false end
     
-    -- First, make sure all keep items are favorited
-    AutoSell.FavoriteAllKeepItems()
+    -- First, make sure all keep items are favorited (if Auto Favorite is enabled)
+    if AutoSell.Settings.AutoFavoriteEnabled then
+        AutoSell.FavoriteAllKeepItems()
+        -- Small delay to ensure favorites are processed
+        task.wait(0.2)
+    end
     
-    -- Small delay to ensure favorites are processed
-    task.wait(0.2)
-    
-    -- Fire sell remote
+    -- Fire sell remote with required argument
     local success = pcall(function()
-        AutoSell.SellRemote:FireServer()
+        local args = {
+            [2] = true
+        }
+        AutoSell.SellRemote:FireServer(unpack(args, 1, table.maxn(args)))
     end)
     
     return success
