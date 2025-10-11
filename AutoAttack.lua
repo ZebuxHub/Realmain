@@ -78,16 +78,21 @@ end
 
 -- Equip weapon (Leather Grip Bat)
 function AutoAttack.EquipWeapon()
-    local success = pcall(function()
+    local success, weaponEquipped = pcall(function()
         local character = AutoAttack.References.LocalPlayer.Character
         local backpack = AutoAttack.References.LocalPlayer:WaitForChild("Backpack")
         
-        if not character then return false end
+        if not character then 
+            print("[AutoAttack] ❌ EquipWeapon: No character")
+            return false 
+        end
         
         -- Find Leather Grip Bat in backpack or character
         local weapon = backpack:FindFirstChild("Leather Grip Bat") or character:FindFirstChild("Leather Grip Bat")
         
         if weapon and weapon:IsA("Tool") then
+            print("[AutoAttack] 🔫 Found weapon:", weapon.Name)
+            
             -- Unequip other tools first
             for _, tool in ipairs(character:GetChildren()) do
                 if tool:IsA("Tool") and tool ~= weapon then
@@ -98,15 +103,24 @@ function AutoAttack.EquipWeapon()
             -- Equip weapon
             if weapon.Parent ~= character then
                 weapon.Parent = character
+                print("[AutoAttack] ✅ Weapon equipped!")
+            else
+                print("[AutoAttack] ✅ Weapon already equipped")
             end
             
             return true
+        else
+            print("[AutoAttack] ❌ EquipWeapon: Leather Grip Bat not found in backpack or character!")
         end
         
         return false
     end)
     
-    return success
+    if success and weaponEquipped then
+        return true
+    else
+        return false
+    end
 end
 
 -- Get player's owned plot number
@@ -264,9 +278,9 @@ function AutoAttack.MoveToTarget(target)
     
     print(string.format("[AutoAttack] 📏 Distance to %s: %.2f studs", target.ID, distance))
     
-    -- Already very close (within 1 stud for attacking)
-    if distance <= 1 then
-        print("[AutoAttack] ✅ In attack range!")
+    -- Already in attack range (within 5 studs)
+    if distance <= 5 then
+        print("[AutoAttack] ✅ In attack range! (%.2f studs)", distance)
         return distance
     end
     
@@ -274,10 +288,11 @@ function AutoAttack.MoveToTarget(target)
     print("[AutoAttack] 🚶 Moving (" .. movementMode .. ") to target...")
     
     if movementMode == "TP" then
-        -- Teleport close to target (1 stud away)
+        -- Teleport close to target (3 studs away for safety)
         pcall(function()
-            local offset = (humanoidRootPart.Position - targetPosition).Unit * 1
-            humanoidRootPart.CFrame = CFrame.new(targetPosition + offset)
+            local direction = (targetPosition - humanoidRootPart.Position).Unit
+            local offset = direction * 3  -- Stand 3 studs away
+            humanoidRootPart.CFrame = CFrame.new(targetPosition - offset)
             print("[AutoAttack] ⚡ Teleported to target")
         end)
         
@@ -290,11 +305,12 @@ function AutoAttack.MoveToTarget(target)
             Enum.EasingDirection.InOut
         )
         
-        local offset = (humanoidRootPart.Position - targetPosition).Unit * 1
+        local direction = (targetPosition - humanoidRootPart.Position).Unit
+        local offset = direction * 3  -- Stand 3 studs away
         local tween = TweenService:Create(
             humanoidRootPart,
             tweenInfo,
-            {CFrame = CFrame.new(targetPosition + offset)}
+            {CFrame = CFrame.new(targetPosition - offset)}
         )
         
         tween:Play()
