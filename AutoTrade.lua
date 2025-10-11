@@ -16,10 +16,13 @@ local AutoTrade = {
     -- State
     IsRunning = false,
     TotalGifts = 0,
+    AutoAcceptEnabled = false,
+    TotalAccepted = 0,
     
     -- Settings
     Settings = {
         AutoTradeEnabled = false,
+        AutoAcceptEnabled = false,
         TargetPlayer = "",
         SelectedBrainrots = {},
         SelectedBrainrotMutations = {},
@@ -34,6 +37,8 @@ local AutoTrade = {
     
     -- Cached Data
     GiftRemote = nil,
+    AcceptGiftRemote = nil,
+    GiftSignalConnection = nil,
     PlayerList = {},
 }
 
@@ -48,11 +53,15 @@ function AutoTrade.Init(services, references, brain)
     AutoTrade.References = references
     AutoTrade.Brain = brain
     
-    -- Cache remote
+    -- Cache remotes
     pcall(function()
         AutoTrade.GiftRemote = AutoTrade.Services.ReplicatedStorage
             :WaitForChild("Remotes", 5)
             :WaitForChild("GiftItem", 5)
+        
+        AutoTrade.AcceptGiftRemote = AutoTrade.Services.ReplicatedStorage
+            :WaitForChild("Remotes", 5)
+            :WaitForChild("AcceptGift", 5)
     end)
     
     return true
@@ -373,6 +382,77 @@ end
 
 --[[
     ========================================
+    Auto Accept Functions
+    ========================================
+]]
+
+-- Auto accept incoming gifts
+function AutoTrade.StartAutoAccept()
+    if AutoTrade.AutoAcceptEnabled then return false end
+    
+    -- Validate remote
+    if not AutoTrade.GiftRemote then
+        pcall(function()
+            AutoTrade.GiftRemote = AutoTrade.Services.ReplicatedStorage
+                :WaitForChild("Remotes", 5)
+                :WaitForChild("GiftItem", 5)
+        end)
+    end
+    
+    if not AutoTrade.AcceptGiftRemote then
+        pcall(function()
+            AutoTrade.AcceptGiftRemote = AutoTrade.Services.ReplicatedStorage
+                :WaitForChild("Remotes", 5)
+                :WaitForChild("AcceptGift", 5)
+        end)
+    end
+    
+    if not AutoTrade.GiftRemote or not AutoTrade.AcceptGiftRemote then
+        warn("[AutoTrade] ⚠️ Failed to find gift remotes!")
+        return false
+    end
+    
+    -- Listen for incoming gifts
+    AutoTrade.GiftSignalConnection = AutoTrade.GiftRemote.OnClientEvent:Connect(function(data)
+        if not AutoTrade.AutoAcceptEnabled then return end
+        
+        -- Validate data
+        if not data or type(data) ~= "table" then return end
+        if not data.ID then return end
+        
+        -- Auto accept the gift
+        task.spawn(function()
+            local success = pcall(function()
+                local args = {
+                    [1] = {
+                        ["ID"] = data.ID
+                    }
+                }
+                AutoTrade.AcceptGiftRemote:FireServer(unpack(args))
+                AutoTrade.TotalAccepted = AutoTrade.TotalAccepted + 1
+            end)
+        end)
+    end)
+    
+    AutoTrade.AutoAcceptEnabled = true
+    return true
+end
+
+function AutoTrade.StopAutoAccept()
+    if not AutoTrade.AutoAcceptEnabled then return false end
+    
+    -- Disconnect signal
+    if AutoTrade.GiftSignalConnection then
+        AutoTrade.GiftSignalConnection:Disconnect()
+        AutoTrade.GiftSignalConnection = nil
+    end
+    
+    AutoTrade.AutoAcceptEnabled = false
+    return true
+end
+
+--[[
+    ========================================
     Status Functions
     ========================================
 ]]
@@ -388,7 +468,9 @@ function AutoTrade.GetStatus()
         IsRunning = AutoTrade.IsRunning,
         TotalGifts = AutoTrade.TotalGifts,
         TargetPlayer = AutoTrade.Settings.TargetPlayer,
-        TotalSelected = totalSelected
+        TotalSelected = totalSelected,
+        AutoAcceptEnabled = AutoTrade.AutoAcceptEnabled,
+        TotalAccepted = AutoTrade.TotalAccepted
     }
 end
 
