@@ -254,8 +254,8 @@ function AutoWater.StartWateringLoop()
                 AutoWater.WaterAllSeeds()
             end
             
-            -- Wait 3 seconds between watering cycles
-            task.wait(3)
+            -- Very short wait to prevent lag, then water again immediately
+            task.wait(0.1)
         end
         
         AutoWater.WateringLoopRunning = false
