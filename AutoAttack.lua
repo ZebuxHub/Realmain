@@ -265,7 +265,7 @@ function AutoAttack.MoveToTarget(target)
     print(string.format("[AutoAttack] 📏 Distance to %s: %.2f studs", target.ID, distance))
     
     -- Already very close (within 1 stud for attacking)
-    if distance <= 5 then
+    if distance <= 1 then
         print("[AutoAttack] ✅ In attack range!")
         return distance
     end
@@ -458,35 +458,19 @@ function AutoAttack.AttackLoop()
                     continue  -- Immediately find new target (no wait)
                 end
                 
-                -- Attack if within 5stud
+                -- Attack if within 1 stud
                 if distance <= 5 then
-                    -- Keep attacking in a tight loop until target dies!
-                    while AutoAttack.IsRunning and AutoAttack.IsTargetValid(target) do
-                        print("[AutoAttack] 💥💥💥 ATTACKING:", target.ID)
-                        AutoAttack.AttackTarget(target)
-                        
-                        -- Small wait to prevent rate limiting (but still spam fast!)
-                        task.wait(AutoAttack.Settings.AttackInterval)
-                        
-                        -- Re-check distance (enemy might move)
-                        pcall(function()
-                            local character = AutoAttack.References.LocalPlayer.Character
-                            if character and character:FindFirstChild("HumanoidRootPart") and target.Model then
-                                local currentDist = (character.HumanoidRootPart.Position - target.Model:GetPivot().Position).Magnitude
-                                if currentDist > 2 then
-                                    print("[AutoAttack] 📏 Enemy moved, re-positioning...")
-                                    return  -- Will break out of loop
-                                end
-                            end
-                        end)
+                    AutoAttack.AttackTarget(target)
+                    
+                    -- Check IMMEDIATELY after attack if target is still alive
+                    if not AutoAttack.IsTargetValid(target) then
+                        print("[AutoAttack] ☠️ Target died from attack!")
+                        AutoAttack.CurrentTarget = nil
+                        continue  -- Target died, find new one NOW
                     end
                     
-                    -- Target died or moved!
-                    if not AutoAttack.IsTargetValid(target) then
-                        print("[AutoAttack] ☠️ Target DEAD! Finding next target...")
-                        AutoAttack.CurrentTarget = nil
-                        continue  -- Find new target immediately
-                    end
+                    -- Wait between attacks (fast spam if interval is low)
+                    task.wait(AutoAttack.Settings.AttackInterval)
                 else
                     print("[AutoAttack] ⏳ Not in range yet, waiting 0.1s...")
                     -- Not in range yet, keep moving (check more frequently)
