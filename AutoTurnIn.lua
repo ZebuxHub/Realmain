@@ -337,12 +337,20 @@ function AutoTurnIn.SetupEventListeners()
     local backpack = player:FindFirstChild("Backpack")
     local character = player.Character
     
-    -- Listen for new items in backpack
+    -- Listen for new items in backpack (only trigger if it matches wanted brainrot)
     if backpack and not AutoTurnIn.BackpackConnection then
         AutoTurnIn.BackpackConnection = backpack.ChildAdded:Connect(function(child)
-            if child:IsA("Tool") and AutoTurnIn.IsRunning then
-                task.wait(0.1) -- Small delay for replication
-                print("[AutoTurnIn] 📥 New item added to backpack:", child.Name)
+            if not child:IsA("Tool") or not AutoTurnIn.IsRunning then return end
+            
+            task.wait(0.1) -- Small delay for replication
+            
+            -- Get current wanted brainrot
+            local wantedName = AutoTurnIn.GetWantedBrainrot()
+            if not wantedName then return end
+            
+            -- Only trigger if the new item matches the wanted brainrot
+            if child.Name == wantedName or child.Name:find(wantedName, 1, true) then
+                print("[AutoTurnIn] 📥 Wanted item added:", child.Name)
                 AutoTurnIn.CheckAndTurnIn()
             end
         end)
@@ -397,17 +405,25 @@ function AutoTurnIn.Start()
         end
     end
     
-    -- Sync progress before starting
-    AutoTurnIn.SyncProgressFromPrison()
-    
     AutoTurnIn.IsRunning = true
     AutoTurnIn.TotalTurnIns = 0
+    
+    -- Sync progress before starting (wait for it to complete)
+    AutoTurnIn.SyncProgressFromPrison()
+    
+    -- Wait a moment for sync to complete
+    task.wait(0.5)
     
     -- Setup event listeners
     AutoTurnIn.SetupEventListeners()
     
-    -- Do initial check
+    -- Do initial check (will use synced progress)
     print("[AutoTurnIn] ▶️ Auto Turn In started (event-driven)")
+    local wantedName = AutoTurnIn.GetWantedBrainrot()
+    if wantedName then
+        print(string.format("[AutoTurnIn] 📍 Starting from [%d/%d]: %s", 
+            AutoTurnIn.CurrentIndex, #AutoTurnIn.WantedList, wantedName))
+    end
     AutoTurnIn.CheckAndTurnIn()
     
     return true
