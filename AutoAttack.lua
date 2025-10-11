@@ -3,7 +3,7 @@
     Automatic combat system with targeting and movement
     
     Features:
-    - Auto equip weapon (Leather Grip Bat)
+    - Auto equip weapon (any weapon with "Bat" in name)
     - Multiple targeting modes (Random, High HP, Low HP)
     - Multiple movement modes (Walk, TP, Tween)
     - ONLY attacks brainrots in YOUR plot with YOUR UserID
@@ -77,7 +77,7 @@ local function FormatNumber(num)
     end
 end
 
--- Equip weapon (Leather Grip Bat) - Optimized
+-- Equip weapon (any Bat) - Optimized
 function AutoAttack.EquipWeapon()
     local success, result = pcall(function()
         local character = AutoAttack.References.LocalPlayer.Character
@@ -86,15 +86,19 @@ function AutoAttack.EquipWeapon()
         local backpack = AutoAttack.References.LocalPlayer:FindFirstChild("Backpack")
         if not backpack then return false end
         
-        -- Check if already equipped (fast path)
-        local weapon = character:FindFirstChild("Leather Grip Bat")
-        if weapon then return true end
+        -- Check if already equipped (fast path) - any bat
+        for _, child in ipairs(character:GetChildren()) do
+            if child:IsA("Tool") and child.Name:find("Bat") then
+                return true
+            end
+        end
         
-        -- Find in backpack
-        weapon = backpack:FindFirstChild("Leather Grip Bat")
-        if weapon and weapon:IsA("Tool") then
-            weapon.Parent = character
-            return true
+        -- Find any bat in backpack
+        for _, weapon in ipairs(backpack:GetChildren()) do
+            if weapon:IsA("Tool") and weapon.Name:find("Bat") then
+                weapon.Parent = character
+                return true
+            end
         end
         
         return false
@@ -363,7 +367,7 @@ function AutoAttack.Start()
     local character = AutoAttack.References.LocalPlayer.Character
     if character then
         AutoAttack.EquippedConnection = character.ChildRemoved:Connect(function(child)
-            if child.Name == "Leather Grip Bat" and AutoAttack.IsRunning then
+            if child:IsA("Tool") and child.Name:find("Bat") and AutoAttack.IsRunning then
                 task.wait(0.1)
                 AutoAttack.EquipWeapon()
             end
