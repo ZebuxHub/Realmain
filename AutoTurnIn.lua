@@ -15,6 +15,8 @@ local AutoTurnIn = {
     IsRunning = false,
     TotalTurnIns = 0,
     CurrentWanted = nil,
+    CurrentIndex = 1, -- Track which brainrot in the list we're on
+    WantedList = {}, -- Cached list from EventTracks.Prison
     
     -- Settings
     Settings = {
@@ -45,7 +47,7 @@ function AutoTurnIn.Init(services, references, brain)
     AutoTurnIn.References = references
     AutoTurnIn.Brain = brain
     
-    -- Cache remote and modules
+    -- Cache remote and wanted list
     pcall(function()
         AutoTurnIn.TurnInRemote = AutoTurnIn.Services.ReplicatedStorage
             :WaitForChild("Remotes", 5)
@@ -53,7 +55,7 @@ function AutoTurnIn.Init(services, references, brain)
             :WaitForChild("Prison", 5)
             :WaitForChild("Interact", 5)
         
-        -- Load modules for reading wanted info
+        -- Load wanted list from EventTracks.Prison
         local modules = AutoTurnIn.Services.ReplicatedStorage:FindFirstChild("Modules")
         if modules then
             local library = modules:FindFirstChild("Library")
@@ -62,27 +64,27 @@ function AutoTurnIn.Init(services, references, brain)
                 if eventTracks then
                     local prisonTrack = eventTracks:FindFirstChild("Prison")
                     if prisonTrack then
-                        AutoTurnIn.EventTrackModule = require(prisonTrack)
+                        local wantedList = require(prisonTrack)
+                        if wantedList and type(wantedList) == "table" then
+                            AutoTurnIn.WantedList = wantedList
+                            print("[AutoTurnIn] ✅ Loaded", #wantedList, "wanted brainrots")
+                        end
                     end
-                end
-            end
-            
-            -- Load PlayerData module
-            local playerData = modules:FindFirstChild("PlayerData")
-            if playerData then
-                AutoTurnIn.PlayerDataModule = require(playerData)
-            end
-            
-            -- Load Brainrot Registry
-            local registries = modules:FindFirstChild("Registries")
-            if registries then
-                local brainrotReg = registries:FindFirstChild("BrainrotRegistry")
-                if brainrotReg then
-                    AutoTurnIn.BrainrotRegistry = require(brainrotReg)
                 end
             end
         end
     end)
+    
+    -- Listen for turn in success to increment index
+    if AutoTurnIn.TurnInRemote then
+        AutoTurnIn.TurnInRemote.OnClientEvent:Connect(function(eventType, data)
+            if eventType == "Success" and data and data.GoalStage then
+                -- Update our progress
+                AutoTurnIn.CurrentIndex = data.GoalStage + 1
+                print("[AutoTurnIn] 🎉 Progress updated! Now on wanted #" .. AutoTurnIn.CurrentIndex)
+            end
+        end)
+    end
     
     return true
 end
@@ -93,54 +95,22 @@ end
     ========================================
 ]]
 
--- Get current wanted brainrot name from UI
+-- Get current wanted brainrot name from the list
 function AutoTurnIn.GetWantedBrainrot()
-    local success, result = pcall(function()
-        -- Try to read from the wanted poster UI
-        local playerGui = AutoTurnIn.References.LocalPlayer:FindFirstChild("PlayerGui")
-        if not playerGui then return nil end
-        
-        local main = playerGui:FindFirstChild("Main")
-        if not main then return nil end
-        
-        -- Find the wanted poster GUI
-        local wantedPoster = nil
-        for _, child in ipairs(main:GetDescendants()) do
-            if child.Name == "WantedPosterGui" then
-                wantedPoster = child
-                break
-            end
-        end
-        
-        if not wantedPoster then return nil end
-        
-        -- Try to find the wanted item title
-        local wantedItemTitle = wantedPoster:FindFirstChild("Frame", true)
-        if wantedItemTitle then
-            wantedItemTitle = wantedItemTitle:FindFirstChild("Main", true)
-            if wantedItemTitle then
-                wantedItemTitle = wantedItemTitle:FindFirstChild("WantedItem", true)
-                if wantedItemTitle then
-                    wantedItemTitle = wantedItemTitle:FindFirstChild("WantedItem_Title", true)
-                    if wantedItemTitle and wantedItemTitle:IsA("TextLabel") then
-                        local text = wantedItemTitle.Text
-                        if text and text ~= "" then
-                            return text
-                        end
-                    end
-                end
-            end
-        end
-        
-        return nil
-    end)
-    
-    if success then
-        return result
-    else
-        warn("[AutoTurnIn] Failed to read wanted brainrot from UI:", result)
+    -- Check if we have the wanted list
+    if not AutoTurnIn.WantedList or #AutoTurnIn.WantedList == 0 then
+        warn("[AutoTurnIn] ⚠️ Wanted list not loaded!")
         return nil
     end
+    
+    -- Make sure index is valid
+    if AutoTurnIn.CurrentIndex < 1 or AutoTurnIn.CurrentIndex > #AutoTurnIn.WantedList then
+        print("[AutoTurnIn] ✅ All wanted brainrots completed!")
+        return nil
+    end
+    
+    -- Return the current wanted brainrot
+    return AutoTurnIn.WantedList[AutoTurnIn.CurrentIndex]
 end
 
 -- Check if player owns the wanted brainrot
@@ -203,7 +173,9 @@ function AutoTurnIn.CheckLoop()
             AutoTurnIn.CurrentWanted = wantedName
             
             if wantedName then
-                print("[AutoTurnIn] 🎯 Wanted:", wantedName)
+                local totalWanted = #AutoTurnIn.WantedList
+                print(string.format("[AutoTurnIn] 🎯 Wanted [%d/%d]: %s", 
+                    AutoTurnIn.CurrentIndex, totalWanted, wantedName))
                 
                 -- Check if we own it
                 if AutoTurnIn.HasWantedBrainrot(wantedName) then
@@ -214,6 +186,9 @@ function AutoTurnIn.CheckLoop()
                     
                     if success then
                         print("[AutoTurnIn] 🎉 Turned in successfully! Total:", AutoTurnIn.TotalTurnIns)
+                        
+                        -- Increment index for next one
+                        AutoTurnIn.CurrentIndex = AutoTurnIn.CurrentIndex + 1
                     else
                         warn("[AutoTurnIn] ⚠️ Failed to turn in!")
                     end
@@ -224,7 +199,32 @@ function AutoTurnIn.CheckLoop()
                     print("[AutoTurnIn] ❌ Don't own", wantedName)
                 end
             else
-                print("[AutoTurnIn] ⚠️ Could not detect wanted brainrot (Prison event might not be active)")
+                if #AutoTurnIn.WantedList == 0 then
+                    warn("[AutoTurnIn] ⚠️ Wanted list not loaded! Retrying...")
+                    
+                    -- Try to reload the list
+                    pcall(function()
+                        local modules = AutoTurnIn.Services.ReplicatedStorage:FindFirstChild("Modules")
+                        if modules then
+                            local library = modules:FindFirstChild("Library")
+                            if library then
+                                local eventTracks = library:FindFirstChild("EventTracks")
+                                if eventTracks then
+                                    local prisonTrack = eventTracks:FindFirstChild("Prison")
+                                    if prisonTrack then
+                                        local wantedList = require(prisonTrack)
+                                        if wantedList and type(wantedList) == "table" then
+                                            AutoTurnIn.WantedList = wantedList
+                                            print("[AutoTurnIn] ✅ Reloaded", #wantedList, "wanted brainrots")
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end)
+                else
+                    print("[AutoTurnIn] ✅ All wanted brainrots completed!")
+                end
             end
             
             -- Wait before next check
@@ -284,10 +284,17 @@ end
 ]]
 
 function AutoTurnIn.GetStatus()
+    local progress = "0/0"
+    if #AutoTurnIn.WantedList > 0 then
+        progress = AutoTurnIn.CurrentIndex .. "/" .. #AutoTurnIn.WantedList
+    end
+    
     return {
         IsRunning = AutoTurnIn.IsRunning,
         TotalTurnIns = AutoTurnIn.TotalTurnIns,
-        CurrentWanted = AutoTurnIn.CurrentWanted or "None"
+        CurrentWanted = AutoTurnIn.CurrentWanted or "None",
+        Progress = progress,
+        CurrentIndex = AutoTurnIn.CurrentIndex
     }
 end
 
