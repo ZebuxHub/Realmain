@@ -12,7 +12,7 @@
     Security:
     - Scans: workspace.ScriptedMap.Brainrots (global location)
     - Plot filter: brainrot:GetAttribute("Plot") == YourPlot
-    - UserID filter: brainrot:GetAttribute("AssociatedPlayer") == LocalPlayer.UserId
+    - Only attacks brainrots in YOUR plot (AssociatedPlayer not used by game)
 ]]
 
 local AutoAttack = {
@@ -174,13 +174,12 @@ function AutoAttack.GetAllTargets()
                     continue
                 end
                 
-                -- CRITICAL: Must match BOTH Plot AND UserID
+                -- Check if Plot matches (AssociatedPlayer is nil/not used by game)
                 local plotMatches = (tostring(plot) == tostring(playerPlot))
-                local userMatches = (associatedPlayer == playerUserID)
                 
-                if plotMatches and userMatches then
+                if plotMatches then
                     matchingBrainrots = matchingBrainrots + 1
-                    print("[AutoAttack] ✅ VALID TARGET:", id)
+                    print("[AutoAttack] ✅ VALID TARGET:", id, "| Plot matches!")
                     table.insert(targets, {
                         Model = brainrot,
                         ID = id,
@@ -191,12 +190,7 @@ function AutoAttack.GetAllTargets()
                         Position = brainrot:GetPivot().Position
                     })
                 else
-                    if not plotMatches then
-                        print("[AutoAttack] ❌ Skipped (wrong plot):", id, "Expected:", playerPlot, "Got:", plot)
-                    end
-                    if not userMatches then
-                        print("[AutoAttack] ❌ Skipped (wrong UserID):", id, "Expected:", playerUserID, "Got:", associatedPlayer)
-                    end
+                    print("[AutoAttack] ❌ Skipped (wrong plot):", id, "Expected:", playerPlot, "Got:", plot)
                 end
             end
         end
