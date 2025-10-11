@@ -15,12 +15,16 @@ local AutoRebirth = {
     -- State
     IsRunning = false,
     CurrentRebirth = 0,
-    LastCheckTime = 0,
+    LastCheckTime = 0,  -- For debouncing
+    
+    -- Event Connections
+    MoneyConnection = nil,
+    BackpackConnection = nil,
+    CharacterConnection = nil,
     
     -- Settings
     Settings = {
         AutoRebirthEnabled = false,
-        CheckInterval = 5,  -- Check every 5 seconds (performance optimized)
     },
     
     -- Dependencies
@@ -208,26 +212,11 @@ function AutoRebirth.CheckRequirements()
     -- Single backpack+character scan with filtered lookup (O(n))
     local ownedBrainrots = AutoRebirth.GetOwnedBrainrots(requiredNames)
     
-    -- Debug: Show what we found
-    print("[AutoRebirth] 🔎 Found brainrots:")
-    for name, tool in pairs(ownedBrainrots) do
-        print("  ✅ " .. name .. " (" .. tool.Name .. ")")
-    end
-    
     -- Validate all requirements met
-    local missing = {}
     for name, _ in pairs(requiredNames) do
         if not ownedBrainrots[name] then
-            table.insert(missing, name)
+            return false  -- Missing required brainrots
         end
-    end
-    
-    if #missing > 0 then
-        print("[AutoRebirth] ❌ Missing brainrots:")
-        for _, name in ipairs(missing) do
-            print("  - " .. name)
-        end
-        return false  -- Missing required brainrots
     end
     
     -- Favorite brainrots to protect them (batch operation)
@@ -273,64 +262,99 @@ end
 
 --[[
     ========================================
-    Main Loop
+    Event-Driven Check
     ========================================
 ]]
 
--- Main loop - Highly optimized
-function AutoRebirth.CheckLoop()
-    task.spawn(function()
-        print("[AutoRebirth] ✅ Check loop started")
-        
-        while AutoRebirth.IsRunning and AutoRebirth.Settings.AutoRebirthEnabled do
-            -- Only check on interval
-            if tick() - AutoRebirth.LastCheckTime >= AutoRebirth.Settings.CheckInterval then
-                AutoRebirth.LastCheckTime = tick()
-                AutoRebirth.CurrentRebirth = AutoRebirth.GetCurrentRebirth()
-                
-                print(string.format("[AutoRebirth] 🔍 Checking requirements for Rebirth %d...", AutoRebirth.CurrentRebirth + 1))
-                
-                -- Get rebirth info for debugging
-                if AutoRebirth.RebirthData then
-                    local rebirthInfo = AutoRebirth.RebirthData[AutoRebirth.CurrentRebirth + 1]
-                    if rebirthInfo and rebirthInfo.Requirements then
-                        local playerMoney = AutoRebirth.GetPlayerMoney()
-                        local requiredMoney = rebirthInfo.Requirements.Money or 0
-                        print(string.format("[AutoRebirth] 💰 Money: %s / %s", 
-                            AutoRebirth.FormatNumber(playerMoney), 
-                            AutoRebirth.FormatNumber(requiredMoney)))
-                        
-                        -- Show required brainrots
-                        print("[AutoRebirth] 📋 Required brainrots:")
-                        for name, _ in pairs(rebirthInfo.Requirements) do
-                            if name ~= "Money" then
-                                print("  - " .. name)
-                            end
-                        end
-                    end
-                end
-                
-                -- Fast check (early exit on money or brainrots missing)
-                local ready, brainrots = AutoRebirth.CheckRequirements()
-                
-                if ready and brainrots then
-                    print("[AutoRebirth] ✅ All requirements met! Starting rebirth...")
-                    if AutoRebirth.DoRebirth(brainrots) then
-                        print("[AutoRebirth] 🎉 Rebirth successful!")
-                        task.wait(10)  -- Cooldown after rebirth
-                    else
-                        warn("[AutoRebirth] ❌ Rebirth failed!")
-                    end
-                else
-                    print("[AutoRebirth] ⏳ Requirements not met yet")
-                end
+-- Check and rebirth if ready (event-driven with debounce)
+function AutoRebirth.CheckAndRebirth()
+    if not AutoRebirth.IsRunning or not AutoRebirth.Settings.AutoRebirthEnabled then
+        return
+    end
+    
+    -- Debounce: Don't check more than once per second (prevent event spam)
+    local now = tick()
+    if now - AutoRebirth.LastCheckTime < 1 then
+        return
+    end
+    AutoRebirth.LastCheckTime = now
+    
+    AutoRebirth.CurrentRebirth = AutoRebirth.GetCurrentRebirth()
+    
+    -- Fast check (early exit on money or brainrots missing)
+    local ready, brainrots = AutoRebirth.CheckRequirements()
+    
+    if ready and brainrots then
+        if AutoRebirth.DoRebirth(brainrots) then
+            -- Successfully rebirthed, wait a bit then setup listeners again
+            task.wait(3)
+            if AutoRebirth.IsRunning then
+                AutoRebirth.SetupEventListeners()
             end
-            
-            task.wait(1)  -- 1 second granularity
         end
-        
-        print("[AutoRebirth] ⏹️ Check loop stopped")
+    end
+end
+
+-- Setup event listeners for money and backpack changes
+function AutoRebirth.SetupEventListeners()
+    -- Clean up old connections
+    if AutoRebirth.MoneyConnection then
+        AutoRebirth.MoneyConnection:Disconnect()
+        AutoRebirth.MoneyConnection = nil
+    end
+    if AutoRebirth.BackpackConnection then
+        AutoRebirth.BackpackConnection:Disconnect()
+        AutoRebirth.BackpackConnection = nil
+    end
+    if AutoRebirth.CharacterConnection then
+        AutoRebirth.CharacterConnection:Disconnect()
+        AutoRebirth.CharacterConnection = nil
+    end
+    
+    local player = AutoRebirth.References.LocalPlayer
+    
+    -- Listen for money changes
+    pcall(function()
+        local moneyValue = player:WaitForChild("leaderstats", 5):WaitForChild("Money", 5)
+        if moneyValue then
+            AutoRebirth.MoneyConnection = moneyValue.Changed:Connect(function()
+                task.defer(AutoRebirth.CheckAndRebirth)
+            end)
+        end
     end)
+    
+    -- Listen for backpack changes (brainrot added)
+    local backpack = player:FindFirstChild("Backpack")
+    if backpack then
+        AutoRebirth.BackpackConnection = backpack.ChildAdded:Connect(function(child)
+            if child:IsA("Tool") then
+                task.wait(0.1)
+                task.defer(AutoRebirth.CheckAndRebirth)
+            end
+        end)
+    end
+    
+    -- Listen for character changes
+    AutoRebirth.CharacterConnection = player.CharacterAdded:Connect(function()
+        task.wait(1)
+        AutoRebirth.SetupEventListeners()
+    end)
+end
+
+-- Cleanup event listeners
+function AutoRebirth.CleanupEventListeners()
+    if AutoRebirth.MoneyConnection then
+        AutoRebirth.MoneyConnection:Disconnect()
+        AutoRebirth.MoneyConnection = nil
+    end
+    if AutoRebirth.BackpackConnection then
+        AutoRebirth.BackpackConnection:Disconnect()
+        AutoRebirth.BackpackConnection = nil
+    end
+    if AutoRebirth.CharacterConnection then
+        AutoRebirth.CharacterConnection:Disconnect()
+        AutoRebirth.CharacterConnection = nil
+    end
 end
 
 --[[
@@ -343,14 +367,23 @@ function AutoRebirth.Start()
     if AutoRebirth.IsRunning then return false end
     
     AutoRebirth.IsRunning = true
-    AutoRebirth.LastCheckTime = 0
-    AutoRebirth.CheckLoop()
+    AutoRebirth.CurrentRebirth = AutoRebirth.GetCurrentRebirth()
+    
+    -- Setup event listeners (event-driven, no continuous loop)
+    AutoRebirth.SetupEventListeners()
+    
+    -- Check immediately on start
+    task.defer(AutoRebirth.CheckAndRebirth)
     
     return true
 end
 
 function AutoRebirth.Stop()
     AutoRebirth.IsRunning = false
+    
+    -- Cleanup event listeners
+    AutoRebirth.CleanupEventListeners()
+    
     return true
 end
 
